@@ -2,9 +2,9 @@
 A friendly campfire companion for exploring Azeroth lore with real-time Blizzard data.
 
 ## Features
-- 🧙 In-character WoW lore assistant: The bot speaks like a warm, story-rich Loremaster focused on Azeroth.
-- 🔎 Natural language understanding: Ask questions conversationally instead of memorizing commands.
-- 🧩 Powerful WoW lookups backed by Blizzard Game Data API:
+- In-character WoW lore assistant focused on Azeroth.
+- Natural language conversations with tool-based Blizzard lookups.
+- Blizzard Game Data API coverage:
   - Creatures
   - Items (by name or item ID)
   - Quests
@@ -18,75 +18,85 @@ A friendly campfire companion for exploring Azeroth lore with real-time Blizzard
   - Battle pets
   - Heirlooms
   - Current WoW Token price
-- 🤖 Local AI workflow: Runs with local Ollama while using Blizzard API for live game data.
-- 🔐 Safer credential handling: Blizzard API credentials are loaded from a local `.env` file.
-- 🔁 Token reliability: Automatically fetches and refreshes Blizzard access token when needed.
+- Local model workflow with Ollama.
+- Credential loading from `.env`.
+- Automatic token refresh with retry logic.
+- In-memory caching for repeated API requests.
 
-## Installation & Setup
-1. Clone or copy this project into a local folder.
-2. Open a terminal in the project directory.
-3. Install Python dependencies:
-
-```bash
-/usr/bin/python3 -m pip install openai requests python-dotenv
+## Project Structure
+```text
+LoreMasterBot/
+├── main.py
+├── requirements.txt
+├── .env.example
+├── README.md
+└── src/
+    ├── __init__.py
+    ├── config.py
+    ├── api/
+    │   ├── __init__.py
+    │   └── blizzard.py
+    ├── tools/
+    │   ├── __init__.py
+    │   └── handlers.py
+    └── bot.py
 ```
 
-4. Install and start Ollama (if you have not already):
+## Installation & Setup
+1. Open a terminal in the project directory.
+2. Install dependencies:
+
+```bash
+python3 -m pip install -r requirements.txt
+```
+
+3. Install and start Ollama (if not already running):
 
 ```bash
 ollama serve
 ```
 
-5. Pull the model used by the bot:
+4. Pull the model used by the bot:
 
 ```bash
 ollama pull llama3.1:8b
 ```
 
-6. Create a `.env` file in the project root with your Blizzard credentials:
+5. Create a `.env` file in the project root:
 
 ```env
 BLIZZARD_CLIENT_ID=your_client_id_here
 BLIZZARD_CLIENT_SECRET=your_client_secret_here
 ```
 
-7. Run the bot:
+6. Run the bot:
 
 ```bash
-/usr/bin/python3 bot.py
+python3 main.py
 ```
 
 ## How to Use
-Type naturally, like you are talking to a fellow adventurer by the fire. No slash commands required.
+Type naturally, like you are talking to a fellow adventurer by the fire.
 
-Natural language examples for major features:
-- 🐉 Creatures: "Tell me about Arthas Menethil"
-- ⚔️ Items by ID: "What is item 19019?"
-- 🧪 Items by name: "Tell me about Thunderfury"
-- 📜 Quests: "What is the quest The Lich King's Fall?"
-- 🐎 Mounts: "Tell me about the mount Invincible"
-- 🏆 Achievements: "What is Ahead of the Curve?"
-- ✨ Spells: "What does Fireball do?"
-- 🏰 Raids/Dungeons: "Tell me the story of Karazhan"
-- 🛡️ Factions: "Who are the Nightfallen?"
-- 👑 Titles: "Tell me about the title Loremaster"
-- 🎁 Toys: "How do I get Mr. Pinchy?"
-- 🐾 Pets: "Tell me about Pandaren Fire Spirit"
-- 🧵 Heirlooms: "What is Tattered Dreadmist Robe?"
-- 💰 WoW Token: "What is the current WoW Token price?"
+Examples:
+- "Tell me about Arthas Menethil"
+- "What is item 19019?"
+- "Tell me about Thunderfury"
+- "What is the quest The Lich King's Fall?"
+- "Tell me about the mount Invincible"
+- "What is Ahead of the Curve?"
+- "What does Fireball do?"
+- "Tell me the story of Karazhan"
+- "Who are the Nightfallen?"
+- "Tell me about the title Loremaster"
+- "How do I get Mr. Pinchy?"
+- "Tell me about Pandaren Fire Spirit"
+- "What is Tattered Dreadmist Robe?"
+- "What is the current WoW Token price?"
 
-To quit the bot, type:
-- `quit`
+Type `quit` to exit.
 
 ## Security Note
-- Keep your Blizzard credentials in `.env`, not directly in source code.
-- Never share or commit `.env` to public repositories.
-- If credentials are missing, the bot warns you and exits to prevent confusing runtime failures.
-
-## Tech Stack
-- 🐍 Python
-- 🤖 Ollama (local model runtime)
-- 🌐 Blizzard Game Data API
-- 📦 python-dotenv
-- 🔗 requests
-- 🧠 OpenAI Python SDK (used for Ollama-compatible chat/tool calling)
+- Keep Blizzard credentials in `.env`.
+- Never commit `.env`.
+- If credentials are missing, the bot exits with a clear warning.

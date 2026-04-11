@@ -1,0 +1,1 @@
+# Package marker for LoreMasterBot source modules.
