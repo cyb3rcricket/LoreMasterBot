@@ -6,11 +6,13 @@ import time
 import threading
 import itertools
 import sys
+from types import SimpleNamespace
 
 from src.api import blizzard as blizzard_api
 from src.api.blizzard import ensure_valid_token, get_access_token
-from src.config import SYSTEM_PROMPT
+from src.config import SYSTEM_PROMPT, MODEL_NAME
 from src.tools.handlers import TOOL_HANDLERS
+from src.tools.schemas import TOOL_SCHEMAS
 
 
 # --- Get Blizzard access token once when the script starts ---
@@ -37,7 +39,8 @@ class ToolCall:
     """Represents a tool call with id, function name, and arguments."""
     def __init__(self, id=None, name=None, arguments=None):
         self.id = id
-        self.function = type("Function", (), {"name": name, "arguments": arguments})()
+        # Using SimpleNamespace for a simple object with dynamic attributes
+        self.function = SimpleNamespace(name=name, arguments=arguments)
 
 
 class Spinner:
@@ -96,204 +99,6 @@ def parse_tool_calls(response_message):
         if tool_calls:
             response_message.content = re.sub(r"\[.*?\]$", "", response_message.content).strip()
     return tool_calls
-
-
-tools = [
-    {
-        "type": "function",
-        "function": {
-            "name": "search_creature",
-            "description": "You MUST call this tool whenever the user asks about a specific WoW creature by name. Always call it first — never answer from memory.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "search_term": {"type": "string", "description": "The name of the creature, e.g. 'Arthas Menethil'"}
-                },
-                "required": ["search_term"]
-            }
-        }
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "lookup_item",
-            "description": "You MUST call this tool whenever the user asks about a specific WoW item by name or ID. Always call it first — never answer from memory.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "item_id": {"type": "string", "description": "The numeric item ID, e.g. '19019'"}
-                },
-                "required": ["item_id"]
-            }
-        }
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "search_item_by_name",
-            "description": "You MUST call this tool whenever the user asks about a specific WoW item by name (not ID). Always call it first — never answer from memory.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "search_term": {"type": "string", "description": "The name of the item, e.g. 'Phantom Blade' or 'Thunderfury'"}
-                },
-                "required": ["search_term"]
-            }
-        }
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "search_quest_by_name",
-            "description": "You MUST call this tool whenever the user asks about a specific WoW quest by name. Always call it first — never answer from memory.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "search_term": {"type": "string", "description": "The name of the quest, e.g. 'The Lich King’s Fall' or 'Phantom Blade'"}
-                },
-                "required": ["search_term"]
-            }
-        }
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "search_mount_by_name",
-            "description": "You MUST call this tool whenever the user asks about a specific WoW mount by name. Always call it first — never answer from memory.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "search_term": {"type": "string", "description": "The name of the mount, e.g. 'Invincible' or 'Phantom Blade'"}
-                },
-                "required": ["search_term"]
-            }
-        }
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "search_achievement_by_name",
-            "description": "You MUST call this tool whenever the user asks about a specific WoW achievement by name. Always call it first — never answer from memory.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "search_term": {"type": "string", "description": "The name of the achievement, e.g. 'Ahead of the Curve' or 'Glory of the Legion Raider'"}
-                },
-                "required": ["search_term"]
-            }
-        }
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "search_spell_by_name",
-            "description": "You MUST call this tool whenever the user asks about a specific WoW spell or ability by name. Always call it first — never answer from memory.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "search_term": {"type": "string", "description": "The name of the spell or ability, e.g. 'Fireball' or 'Thunderfury'"}
-                },
-                "required": ["search_term"]
-            }
-        }
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "search_journal_instance_by_name",
-            "description": "You MUST call this tool whenever the user asks about a specific WoW raid, dungeon, or journal instance by name. Always call it first — never answer from memory.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "search_term": {"type": "string", "description": "The name of the raid or dungeon, e.g. 'Karazhan' or 'Stratholme'"}
-                },
-                "required": ["search_term"]
-            }
-        }
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "search_faction_by_name",
-            "description": "You MUST call this tool whenever the user asks about a specific WoW reputation faction by name. Always call it first — never answer from memory.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "search_term": {"type": "string", "description": "The name of the faction, e.g. 'The Nightfallen' or 'Cenarion Circle'"}
-                },
-                "required": ["search_term"]
-            }
-        }
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "search_title_by_name",
-            "description": "You MUST call this tool whenever the user asks about a specific WoW title by name. Always call it first — never answer from memory.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "search_term": {"type": "string", "description": "The name of the title, e.g. 'the Undying' or 'Loremaster'"}
-                },
-                "required": ["search_term"]
-            }
-        }
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "search_toy_by_name",
-            "description": "You MUST call this tool whenever the user asks about a specific WoW toy by name. Always call it first — never answer from memory.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "search_term": {"type": "string", "description": "The name of the toy, e.g. 'Red Rider Air Rifle' or 'Mr. Pinchy'"}
-                },
-                "required": ["search_term"]
-            }
-        }
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "search_pet_by_name",
-            "description": "You MUST call this tool whenever the user asks about a specific WoW battle pet by name. Always call it first — never answer from memory.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "search_term": {"type": "string", "description": "The name of the battle pet, e.g. 'Mr. Pinchy' or 'Pandaren Fire Spirit'"}
-                },
-                "required": ["search_term"]
-            }
-        }
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "search_heirloom_by_name",
-            "description": "You MUST call this tool whenever the user asks about a specific WoW heirloom by name. Always call it first — never answer from memory.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "search_term": {"type": "string", "description": "The name of the heirloom, e.g. 'Tattered Dreadmist Robe' or 'Vindictive Gladiator's Chain Helm'"}
-                },
-                "required": ["search_term"]
-            }
-        }
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "get_wow_token_price",
-            "description": "You MUST call this tool whenever the user asks about the current WoW Token price or gold value of a token. Always call it first — never answer from memory.",
-            "parameters": {
-                "type": "object",
-                "properties": {},
-                "required": []
-            }
-        }
-    }
-]
 
 
 def trim_history(history, max_turns=7):
@@ -362,8 +167,8 @@ def run():
 
         chat_completion = client.chat.completions.create(
             messages=messages,
-            model="llama3.1:8b",
-            tools=tools,
+            model=MODEL_NAME,
+            tools=TOOL_SCHEMAS,
             tool_choice="auto"
         )
 
@@ -397,7 +202,7 @@ def run():
             # Final LLM call with tool results
             final_completion = client.chat.completions.create(
                 messages=[{"role": "system", "content": SYSTEM_PROMPT}] + history,
-                model="llama3.1:8b"
+                model=MODEL_NAME
             )
             response = final_completion.choices[0].message.content
 

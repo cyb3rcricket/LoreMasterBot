@@ -37,3 +37,6 @@ Always stay 100% in character as the Loremaster's Companion. All responses must 
 
 # SYSTEM_PROMPT is used on EVERY message so the bot always stays strictly WoW-only
 SYSTEM_PROMPT = wow_only_system_prompt
+
+# Model name for the LLM (currently using Ollama with Llama 3.1 8B)
+MODEL_NAME = "llama3.1:8b"
