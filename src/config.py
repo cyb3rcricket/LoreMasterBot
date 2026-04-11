@@ -4,6 +4,11 @@ import os
 from dotenv import load_dotenv
 
 
+class MissingCredentialsError(Exception):
+    """Raised when required Blizzard API credentials are missing."""
+    pass
+
+
 # Load environment variables from .env file (much safer than hardcoding keys)
 load_dotenv()
 
@@ -17,7 +22,8 @@ if not CLIENT_ID or not CLIENT_SECRET:
     print("   BLIZZARD_CLIENT_ID=your_client_id_here")
     print("   BLIZZARD_CLIENT_SECRET=your_client_secret_here")
     print("   (Get a new set from https://develop.battle.net if needed)")
-    exit(1)
+    # Raise exception instead of exiting to allow testing and better error handling
+    raise MissingCredentialsError("Blizzard API credentials are required but missing.")
 
 
 wow_only_system_prompt = """

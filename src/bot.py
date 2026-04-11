@@ -10,9 +10,15 @@ from types import SimpleNamespace
 
 from src.api import blizzard as blizzard_api
 from src.api.blizzard import ensure_valid_token, get_access_token
-from src.config import SYSTEM_PROMPT, MODEL_NAME
+from src.config import MissingCredentialsError
 from src.tools.handlers import TOOL_HANDLERS
 from src.tools.schemas import TOOL_SCHEMAS
+
+try:
+    from src.config import SYSTEM_PROMPT, MODEL_NAME
+except MissingCredentialsError:
+    import sys
+    sys.exit(1)
 
 
 # --- Get Blizzard access token once when the script starts ---
@@ -210,6 +216,9 @@ def run():
         else:
             response = response_message.content
 
+        # defensive guard in case final response is None/empty
+        if not response:
+            response = "(no response)"
         history.append({"role": "assistant", "content": response})
         history = trim_history(history)
         print(f"Loremaster: {response}")

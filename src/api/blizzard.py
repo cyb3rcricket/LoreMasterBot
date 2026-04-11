@@ -1,4 +1,4 @@
-# Blizzard API integration: token lifecycle, caching, search, and entity lookups.
+"""Blizzard API integration: token lifecycle, caching, search, and entity lookups."""
 import time
 
 import requests

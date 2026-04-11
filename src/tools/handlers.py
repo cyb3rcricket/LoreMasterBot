@@ -1,4 +1,4 @@
-# Tool-call handlers and dispatcher mapping for LoreMasterBot.
+"""Tool-call handlers and dispatcher mapping for LoreMasterBot."""
 from src.api.blizzard import (
     get_achievement_data,
     get_creature_data,

@@ -22,24 +22,29 @@ A friendly campfire companion for exploring Azeroth lore with real-time Blizzard
 - Credential loading from `.env`.
 - Automatic token refresh with retry logic.
 - In-memory caching for repeated API requests.
+- Loading spinner during Blizzard API fetches for better UX.
+- Smart conversation history management (keeps ~7 full turns for context).
 
 ## Project Structure
+The project is organized into a clean, modular structure for maintainability:
+
 ```text
 LoreMasterBot/
-├── main.py
-├── requirements.txt
-├── .env.example
-├── README.md
-└── src/
+├── main.py                 # Entry point
+├── requirements.txt        # Python dependencies
+├── .env.example            # Example environment file
+├── README.md               # This file
+└── src/                    # Main source code
     ├── __init__.py
-    ├── config.py
+    ├── config.py           # Configuration, prompts, and credentials
     ├── api/
     │   ├── __init__.py
-    │   └── blizzard.py
+    │   └── blizzard.py     # Blizzard API client with caching
     ├── tools/
     │   ├── __init__.py
-    │   └── handlers.py
-    └── bot.py
+    │   ├── schemas.py      # OpenAI tool schemas
+    │   └── handlers.py     # Tool call handlers
+    └── bot.py              # Main chat loop and orchestration
 ```
 
 ## Installation & Setup
@@ -47,7 +52,7 @@ LoreMasterBot/
 2. Install dependencies:
 
 ```bash
-python3 -m pip install -r requirements.txt
+python -m pip install -r requirements.txt
 ```
 
 3. Install and start Ollama (if not already running):
@@ -72,7 +77,7 @@ BLIZZARD_CLIENT_SECRET=your_client_secret_here
 6. Run the bot:
 
 ```bash
-python3 main.py
+python main.py
 ```
 
 ## How to Use
