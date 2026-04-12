@@ -24,9 +24,9 @@ def handle_search_creature(function_args, access_token):
     creature_id = search_blizzard(search_term, "creature", access_token)
     if creature_id:
         creature_data = get_creature_data(creature_id, access_token)
-        return f"Creature data received: {creature_data}" if creature_data else "TOOL RESULT: NO OFFICIAL DATA FOUND for '{search_term}' in the Blizzard API. You MUST tell the user that this exact entity could not be found in official records. You MUST NOT invent, fabricate, guess, or add any lore, stats, or story details from your own knowledge. Just admit we don't have the data and offer to talk about something else in Azeroth."
+        return f"Creature data received: {creature_data}" if creature_data else f"TOOL RESULT: NO OFFICIAL DATA FOUND for '{search_term}' in the Blizzard API. You MUST tell the user that this exact entity could not be found in official records. You MUST NOT invent, fabricate, guess, or add any lore, stats, or story details from your own knowledge. Just admit we don't have the data and offer to talk about something else in Azeroth."
     else:
-        return "TOOL RESULT: NO OFFICIAL DATA FOUND for '{search_term}' in the Blizzard API. You MUST tell the user that this exact entity could not be found in official records. You MUST NOT invent, fabricate, guess, or add any lore, stats, or story details from your own knowledge. Just admit we don't have the data and offer to talk about something else in Azeroth."
+        return f"TOOL RESULT: NO OFFICIAL DATA FOUND for '{search_term}' in the Blizzard API. You MUST tell the user that this exact entity could not be found in official records. You MUST NOT invent, fabricate, guess, or add any lore, stats, or story details from your own knowledge. Just admit we don't have the data and offer to talk about something else in Azeroth."
 
 
 def handle_lookup_item(function_args, access_token):
@@ -34,7 +34,7 @@ def handle_lookup_item(function_args, access_token):
         return "The Blizzard API is currently unavailable, so I cannot look up item information."
     item_id = function_args.get("item_id")
     item_data = get_item_data(item_id, access_token)
-    return f"Item data received: {item_data}" if item_data else "TOOL RESULT: NO OFFICIAL DATA FOUND for item ID '{item_id}' in the Blizzard API. You MUST tell the user that this exact entity could not be found in official records. You MUST NOT invent, fabricate, guess, or add any lore, stats, or story details from your own knowledge. Just admit we don't have the data and offer to talk about something else in Azeroth."
+    return f"Item data received: {item_data}" if item_data else f"TOOL RESULT: NO OFFICIAL DATA FOUND for item ID '{item_id}' in the Blizzard API. You MUST tell the user that this exact entity could not be found in official records. You MUST NOT invent, fabricate, guess, or add any lore, stats, or story details from your own knowledge. Just admit we don't have the data and offer to talk about something else in Azeroth."
 
 
 def handle_search_item_by_name(function_args, access_token):
@@ -44,9 +44,9 @@ def handle_search_item_by_name(function_args, access_token):
     item_id = search_blizzard(search_term, "item", access_token)
     if item_id:
         item_data = get_item_data(item_id, access_token)
-        return f"Item data received: {item_data}" if item_data else "TOOL RESULT: NO OFFICIAL DATA FOUND for '{search_term}' in the Blizzard API. You MUST tell the user that this exact entity could not be found in official records. You MUST NOT invent, fabricate, guess, or add any lore, stats, or story details from your own knowledge. Just admit we don't have the data and offer to talk about something else in Azeroth."
+        return f"Item data received: {item_data}" if item_data else f"TOOL RESULT: NO OFFICIAL DATA FOUND for '{search_term}' in the Blizzard API. You MUST tell the user that this exact entity could not be found in official records. You MUST NOT invent, fabricate, guess, or add any lore, stats, or story details from your own knowledge. Just admit we don't have the data and offer to talk about something else in Azeroth."
     else:
-        return "TOOL RESULT: NO OFFICIAL DATA FOUND for '{search_term}' in the Blizzard API. You MUST tell the user that this exact entity could not be found in official records. You MUST NOT invent, fabricate, guess, or add any lore, stats, or story details from your own knowledge. Just admit we don't have the data and offer to talk about something else in Azeroth."
+        return f"TOOL RESULT: NO OFFICIAL DATA FOUND for '{search_term}' in the Blizzard API. You MUST tell the user that this exact entity could not be found in official records. You MUST NOT invent, fabricate, guess, or add any lore, stats, or story details from your own knowledge. Just admit we don't have the data and offer to talk about something else in Azeroth."
 
 
 def handle_search_quest_by_name(function_args, access_token):
@@ -56,9 +56,9 @@ def handle_search_quest_by_name(function_args, access_token):
     quest_id = search_blizzard(search_term, "quest", access_token)
     if quest_id:
         quest_data = get_quest_data(quest_id, access_token)
-        return f"Quest data received: {quest_data}" if quest_data else "TOOL RESULT: NO OFFICIAL DATA FOUND for '{search_term}' in the Blizzard API. You MUST tell the user that this exact entity could not be found in official records. You MUST NOT invent, fabricate, guess, or add any lore, stats, or story details from your own knowledge. Just admit we don't have the data and offer to talk about something else in Azeroth."
+        return f"Quest data received: {quest_data}" if quest_data else f"TOOL RESULT: NO OFFICIAL DATA FOUND for '{search_term}' in the Blizzard API. You MUST tell the user that this exact entity could not be found in official records. You MUST NOT invent, fabricate, guess, or add any lore, stats, or story details from your own knowledge. Just admit we don't have the data and offer to talk about something else in Azeroth."
     else:
-        return "TOOL RESULT: NO OFFICIAL DATA FOUND for '{search_term}' in the Blizzard API. You MUST tell the user that this exact entity could not be found in official records. You MUST NOT invent, fabricate, guess, or add any lore, stats, or story details from your own knowledge. Just admit we don't have the data and offer to talk about something else in Azeroth."
+        return f"TOOL RESULT: NO OFFICIAL DATA FOUND for '{search_term}' in the Blizzard API. You MUST tell the user that this exact entity could not be found in official records. You MUST NOT invent, fabricate, guess, or add any lore, stats, or story details from your own knowledge. Just admit we don't have the data and offer to talk about something else in Azeroth."
 
 
 def handle_search_mount_by_name(function_args, access_token):
@@ -68,9 +68,9 @@ def handle_search_mount_by_name(function_args, access_token):
     mount_id = search_blizzard(search_term, "mount", access_token)
     if mount_id:
         mount_data = get_mount_data(mount_id, access_token)
-        return f"Mount data received: {mount_data}" if mount_data else "TOOL RESULT: NO OFFICIAL DATA FOUND for '{search_term}' in the Blizzard API. You MUST tell the user that this exact entity could not be found in official records. You MUST NOT invent, fabricate, guess, or add any lore, stats, or story details from your own knowledge. Just admit we don't have the data and offer to talk about something else in Azeroth."
+        return f"Mount data received: {mount_data}" if mount_data else f"TOOL RESULT: NO OFFICIAL DATA FOUND for '{search_term}' in the Blizzard API. You MUST tell the user that this exact entity could not be found in official records. You MUST NOT invent, fabricate, guess, or add any lore, stats, or story details from your own knowledge. Just admit we don't have the data and offer to talk about something else in Azeroth."
     else:
-        return "TOOL RESULT: NO OFFICIAL DATA FOUND for '{search_term}' in the Blizzard API. You MUST tell the user that this exact entity could not be found in official records. You MUST NOT invent, fabricate, guess, or add any lore, stats, or story details from your own knowledge. Just admit we don't have the data and offer to talk about something else in Azeroth."
+        return f"TOOL RESULT: NO OFFICIAL DATA FOUND for '{search_term}' in the Blizzard API. You MUST tell the user that this exact entity could not be found in official records. You MUST NOT invent, fabricate, guess, or add any lore, stats, or story details from your own knowledge. Just admit we don't have the data and offer to talk about something else in Azeroth."
 
 
 def handle_search_achievement_by_name(function_args, access_token):
@@ -80,9 +80,9 @@ def handle_search_achievement_by_name(function_args, access_token):
     achievement_id = search_blizzard(search_term, "achievement", access_token)
     if achievement_id:
         achievement_data = get_achievement_data(achievement_id, access_token)
-        return f"Achievement data received: {achievement_data}" if achievement_data else "TOOL RESULT: NO OFFICIAL DATA FOUND for '{search_term}' in the Blizzard API. You MUST tell the user that this exact entity could not be found in official records. You MUST NOT invent, fabricate, guess, or add any lore, stats, or story details from your own knowledge. Just admit we don't have the data and offer to talk about something else in Azeroth."
+        return f"Achievement data received: {achievement_data}" if achievement_data else f"TOOL RESULT: NO OFFICIAL DATA FOUND for '{search_term}' in the Blizzard API. You MUST tell the user that this exact entity could not be found in official records. You MUST NOT invent, fabricate, guess, or add any lore, stats, or story details from your own knowledge. Just admit we don't have the data and offer to talk about something else in Azeroth."
     else:
-        return "TOOL RESULT: NO OFFICIAL DATA FOUND for '{search_term}' in the Blizzard API. You MUST tell the user that this exact entity could not be found in official records. You MUST NOT invent, fabricate, guess, or add any lore, stats, or story details from your own knowledge. Just admit we don't have the data and offer to talk about something else in Azeroth."
+        return f"TOOL RESULT: NO OFFICIAL DATA FOUND for '{search_term}' in the Blizzard API. You MUST tell the user that this exact entity could not be found in official records. You MUST NOT invent, fabricate, guess, or add any lore, stats, or story details from your own knowledge. Just admit we don't have the data and offer to talk about something else in Azeroth."
 
 
 def handle_search_spell_by_name(function_args, access_token):
@@ -92,9 +92,9 @@ def handle_search_spell_by_name(function_args, access_token):
     spell_id = search_blizzard(search_term, "spell", access_token)
     if spell_id:
         spell_data = get_spell_data(spell_id, access_token)
-        return f"Spell data received: {spell_data}" if spell_data else "TOOL RESULT: NO OFFICIAL DATA FOUND for '{search_term}' in the Blizzard API. You MUST tell the user that this exact entity could not be found in official records. You MUST NOT invent, fabricate, guess, or add any lore, stats, or story details from your own knowledge. Just admit we don't have the data and offer to talk about something else in Azeroth."
+        return f"Spell data received: {spell_data}" if spell_data else f"TOOL RESULT: NO OFFICIAL DATA FOUND for '{search_term}' in the Blizzard API. You MUST tell the user that this exact entity could not be found in official records. You MUST NOT invent, fabricate, guess, or add any lore, stats, or story details from your own knowledge. Just admit we don't have the data and offer to talk about something else in Azeroth."
     else:
-        return "TOOL RESULT: NO OFFICIAL DATA FOUND for '{search_term}' in the Blizzard API. You MUST tell the user that this exact entity could not be found in official records. You MUST NOT invent, fabricate, guess, or add any lore, stats, or story details from your own knowledge. Just admit we don't have the data and offer to talk about something else in Azeroth."
+        return f"TOOL RESULT: NO OFFICIAL DATA FOUND for '{search_term}' in the Blizzard API. You MUST tell the user that this exact entity could not be found in official records. You MUST NOT invent, fabricate, guess, or add any lore, stats, or story details from your own knowledge. Just admit we don't have the data and offer to talk about something else in Azeroth."
 
 
 def handle_search_journal_instance_by_name(function_args, access_token):
@@ -104,9 +104,9 @@ def handle_search_journal_instance_by_name(function_args, access_token):
     instance_id = search_blizzard(search_term, "journal-instance", access_token)
     if instance_id:
         instance_data = get_journal_instance_data(instance_id, access_token)
-        return f"Journal instance data received: {instance_data}" if instance_data else "TOOL RESULT: NO OFFICIAL DATA FOUND for '{search_term}' in the Blizzard API. You MUST tell the user that this exact entity could not be found in official records. You MUST NOT invent, fabricate, guess, or add any lore, stats, or story details from your own knowledge. Just admit we don't have the data and offer to talk about something else in Azeroth."
+        return f"Journal instance data received: {instance_data}" if instance_data else f"TOOL RESULT: NO OFFICIAL DATA FOUND for '{search_term}' in the Blizzard API. You MUST tell the user that this exact entity could not be found in official records. You MUST NOT invent, fabricate, guess, or add any lore, stats, or story details from your own knowledge. Just admit we don't have the data and offer to talk about something else in Azeroth."
     else:
-        return "TOOL RESULT: NO OFFICIAL DATA FOUND for '{search_term}' in the Blizzard API. You MUST tell the user that this exact entity could not be found in official records. You MUST NOT invent, fabricate, guess, or add any lore, stats, or story details from your own knowledge. Just admit we don't have the data and offer to talk about something else in Azeroth."
+        return f"TOOL RESULT: NO OFFICIAL DATA FOUND for '{search_term}' in the Blizzard API. You MUST tell the user that this exact entity could not be found in official records. You MUST NOT invent, fabricate, guess, or add any lore, stats, or story details from your own knowledge. Just admit we don't have the data and offer to talk about something else in Azeroth."
 
 
 def handle_search_faction_by_name(function_args, access_token):
@@ -116,9 +116,9 @@ def handle_search_faction_by_name(function_args, access_token):
     faction_id = search_blizzard(search_term, "reputation-faction", access_token)
     if faction_id:
         faction_data = get_reputation_faction_data(faction_id, access_token)
-        return f"Faction data received: {faction_data}" if faction_data else "TOOL RESULT: NO OFFICIAL DATA FOUND for '{search_term}' in the Blizzard API. You MUST tell the user that this exact entity could not be found in official records. You MUST NOT invent, fabricate, guess, or add any lore, stats, or story details from your own knowledge. Just admit we don't have the data and offer to talk about something else in Azeroth."
+        return f"Faction data received: {faction_data}" if faction_data else f"TOOL RESULT: NO OFFICIAL DATA FOUND for '{search_term}' in the Blizzard API. You MUST tell the user that this exact entity could not be found in official records. You MUST NOT invent, fabricate, guess, or add any lore, stats, or story details from your own knowledge. Just admit we don't have the data and offer to talk about something else in Azeroth."
     else:
-        return "TOOL RESULT: NO OFFICIAL DATA FOUND for '{search_term}' in the Blizzard API. You MUST tell the user that this exact entity could not be found in official records. You MUST NOT invent, fabricate, guess, or add any lore, stats, or story details from your own knowledge. Just admit we don't have the data and offer to talk about something else in Azeroth."
+        return f"TOOL RESULT: NO OFFICIAL DATA FOUND for '{search_term}' in the Blizzard API. You MUST tell the user that this exact entity could not be found in official records. You MUST NOT invent, fabricate, guess, or add any lore, stats, or story details from your own knowledge. Just admit we don't have the data and offer to talk about something else in Azeroth."
 
 
 def handle_search_title_by_name(function_args, access_token):
@@ -128,9 +128,9 @@ def handle_search_title_by_name(function_args, access_token):
     title_id = search_blizzard(search_term, "title", access_token)
     if title_id:
         title_data = get_title_data(title_id, access_token)
-        return f"Title data received: {title_data}" if title_data else "TOOL RESULT: NO OFFICIAL DATA FOUND for '{search_term}' in the Blizzard API. You MUST tell the user that this exact entity could not be found in official records. You MUST NOT invent, fabricate, guess, or add any lore, stats, or story details from your own knowledge. Just admit we don't have the data and offer to talk about something else in Azeroth."
+        return f"Title data received: {title_data}" if title_data else f"TOOL RESULT: NO OFFICIAL DATA FOUND for '{search_term}' in the Blizzard API. You MUST tell the user that this exact entity could not be found in official records. You MUST NOT invent, fabricate, guess, or add any lore, stats, or story details from your own knowledge. Just admit we don't have the data and offer to talk about something else in Azeroth."
     else:
-        return "TOOL RESULT: NO OFFICIAL DATA FOUND for '{search_term}' in the Blizzard API. You MUST tell the user that this exact entity could not be found in official records. You MUST NOT invent, fabricate, guess, or add any lore, stats, or story details from your own knowledge. Just admit we don't have the data and offer to talk about something else in Azeroth."
+        return f"TOOL RESULT: NO OFFICIAL DATA FOUND for '{search_term}' in the Blizzard API. You MUST tell the user that this exact entity could not be found in official records. You MUST NOT invent, fabricate, guess, or add any lore, stats, or story details from your own knowledge. Just admit we don't have the data and offer to talk about something else in Azeroth."
 
 
 def handle_search_toy_by_name(function_args, access_token):
@@ -140,9 +140,9 @@ def handle_search_toy_by_name(function_args, access_token):
     toy_id = search_blizzard(search_term, "toy", access_token)
     if toy_id:
         toy_data = get_toy_data(toy_id, access_token)
-        return f"Toy data received: {toy_data}" if toy_data else "TOOL RESULT: NO OFFICIAL DATA FOUND for '{search_term}' in the Blizzard API. You MUST tell the user that this exact entity could not be found in official records. You MUST NOT invent, fabricate, guess, or add any lore, stats, or story details from your own knowledge. Just admit we don't have the data and offer to talk about something else in Azeroth."
+        return f"Toy data received: {toy_data}" if toy_data else f"TOOL RESULT: NO OFFICIAL DATA FOUND for '{search_term}' in the Blizzard API. You MUST tell the user that this exact entity could not be found in official records. You MUST NOT invent, fabricate, guess, or add any lore, stats, or story details from your own knowledge. Just admit we don't have the data and offer to talk about something else in Azeroth."
     else:
-        return "TOOL RESULT: NO OFFICIAL DATA FOUND for '{search_term}' in the Blizzard API. You MUST tell the user that this exact entity could not be found in official records. You MUST NOT invent, fabricate, guess, or add any lore, stats, or story details from your own knowledge. Just admit we don't have the data and offer to talk about something else in Azeroth."
+        return f"TOOL RESULT: NO OFFICIAL DATA FOUND for '{search_term}' in the Blizzard API. You MUST tell the user that this exact entity could not be found in official records. You MUST NOT invent, fabricate, guess, or add any lore, stats, or story details from your own knowledge. Just admit we don't have the data and offer to talk about something else in Azeroth."
 
 
 def handle_search_pet_by_name(function_args, access_token):
@@ -152,9 +152,9 @@ def handle_search_pet_by_name(function_args, access_token):
     pet_id = search_blizzard(search_term, "pet", access_token)
     if pet_id:
         pet_data = get_pet_data(pet_id, access_token)
-        return f"Pet data received: {pet_data}" if pet_data else "TOOL RESULT: NO OFFICIAL DATA FOUND for '{search_term}' in the Blizzard API. You MUST tell the user that this exact entity could not be found in official records. You MUST NOT invent, fabricate, guess, or add any lore, stats, or story details from your own knowledge. Just admit we don't have the data and offer to talk about something else in Azeroth."
+        return f"Pet data received: {pet_data}" if pet_data else f"TOOL RESULT: NO OFFICIAL DATA FOUND for '{search_term}' in the Blizzard API. You MUST tell the user that this exact entity could not be found in official records. You MUST NOT invent, fabricate, guess, or add any lore, stats, or story details from your own knowledge. Just admit we don't have the data and offer to talk about something else in Azeroth."
     else:
-        return "TOOL RESULT: NO OFFICIAL DATA FOUND for '{search_term}' in the Blizzard API. You MUST tell the user that this exact entity could not be found in official records. You MUST NOT invent, fabricate, guess, or add any lore, stats, or story details from your own knowledge. Just admit we don't have the data and offer to talk about something else in Azeroth."
+        return f"TOOL RESULT: NO OFFICIAL DATA FOUND for '{search_term}' in the Blizzard API. You MUST tell the user that this exact entity could not be found in official records. You MUST NOT invent, fabricate, guess, or add any lore, stats, or story details from your own knowledge. Just admit we don't have the data and offer to talk about something else in Azeroth."
 
 
 def handle_search_heirloom_by_name(function_args, access_token):
@@ -164,9 +164,9 @@ def handle_search_heirloom_by_name(function_args, access_token):
     heirloom_id = search_blizzard(search_term, "heirloom", access_token)
     if heirloom_id:
         heirloom_data = get_heirloom_data(heirloom_id, access_token)
-        return f"Heirloom data received: {heirloom_data}" if heirloom_data else "TOOL RESULT: NO OFFICIAL DATA FOUND for '{search_term}' in the Blizzard API. You MUST tell the user that this exact entity could not be found in official records. You MUST NOT invent, fabricate, guess, or add any lore, stats, or story details from your own knowledge. Just admit we don't have the data and offer to talk about something else in Azeroth."
+        return f"Heirloom data received: {heirloom_data}" if heirloom_data else f"TOOL RESULT: NO OFFICIAL DATA FOUND for '{search_term}' in the Blizzard API. You MUST tell the user that this exact entity could not be found in official records. You MUST NOT invent, fabricate, guess, or add any lore, stats, or story details from your own knowledge. Just admit we don't have the data and offer to talk about something else in Azeroth."
     else:
-        return "TOOL RESULT: NO OFFICIAL DATA FOUND for '{search_term}' in the Blizzard API. You MUST tell the user that this exact entity could not be found in official records. You MUST NOT invent, fabricate, guess, or add any lore, stats, or story details from your own knowledge. Just admit we don't have the data and offer to talk about something else in Azeroth."
+        return f"TOOL RESULT: NO OFFICIAL DATA FOUND for '{search_term}' in the Blizzard API. You MUST tell the user that this exact entity could not be found in official records. You MUST NOT invent, fabricate, guess, or add any lore, stats, or story details from your own knowledge. Just admit we don't have the data and offer to talk about something else in Azeroth."
 
 
 def handle_get_wow_token_price(function_args, access_token):

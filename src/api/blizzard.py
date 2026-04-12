@@ -16,6 +16,18 @@ token_expiry = 0   # Unix timestamp when the current token expires
 search_cache = {}
 data_cache = {}
 
+# Famous items fallback for items that may not search well
+famous_items = {
+    "Ashbringer": 13262,
+    "Thunderfury": 19019,
+    "Invincible": 118427,  # mount ID example
+    "Sulfuras": 17182,
+    "Atiesh": 22589,
+    "Val'anyr": 46017,
+    "Shadowmourne": 49623,
+    "Dragonwrath": 78495,
+}
+
 
 def get_access_token():
     """Fetches a new access token from Blizzard. Pure function - no side effects."""
@@ -64,6 +76,13 @@ def ensure_valid_token():
 
 def search_blizzard(search_term, entity_type, access_token):
     """Searches for an entity and returns the first result's ID. Note: 'quest' and 'achievement' types are known to have spotty name-search support."""
+    if entity_type == "item" and search_term in famous_items:
+        item_id = famous_items[search_term]
+        print(f"DEBUG: Using famous item fallback for '{search_term}' → ID {item_id}")
+        key = (entity_type, search_term.lower())
+        search_cache[key] = item_id
+        return item_id
+    
     key = (entity_type, search_term.lower())
     if key in search_cache:
         return search_cache[key]
@@ -77,12 +96,14 @@ def search_blizzard(search_term, entity_type, access_token):
             "namespace": "static-us",
             "locale": "en_US",
             "name.en_US": search_term,
-            "_page": 1
+            "_page": 1,
+            "_pageSize": 5
         }
         try:
             response = requests.get(url, params=params, headers=headers, timeout=10)
             response.raise_for_status()
             results = response.json().get("results")
+            print(f"DEBUG: search_blizzard for {entity_type} '{search_term}' with name.en_US returned {len(results) if results else 0} results")
             if results:
                 id = results[0]["data"]["id"]
                 search_cache[key] = id
@@ -95,12 +116,14 @@ def search_blizzard(search_term, entity_type, access_token):
             "namespace": "static-us",
             "locale": "en_US",
             "name": search_term,
-            "_page": 1
+            "_page": 1,
+            "_pageSize": 5
         }
         try:
             response = requests.get(url, params=params, headers=headers, timeout=10)
             response.raise_for_status()
             results = response.json().get("results")
+            print(f"DEBUG: search_blizzard for {entity_type} '{search_term}' with name returned {len(results) if results else 0} results")
             if results:
                 id = results[0]["data"]["id"]
                 search_cache[key] = id
@@ -113,12 +136,14 @@ def search_blizzard(search_term, entity_type, access_token):
             "namespace": "static-us",
             "locale": "en_US",
             "name.en_US": search_term,
-            "_page": 1
+            "_page": 1,
+            "_pageSize": 5
         }
         try:
             response = requests.get(url, params=params, headers=headers, timeout=10)
             response.raise_for_status()
             results = response.json().get("results")
+            print(f"DEBUG: search_blizzard for {entity_type} '{search_term}' returned {len(results) if results else 0} results")
             if results:
                 id = results[0]["data"]["id"]
                 search_cache[key] = id
