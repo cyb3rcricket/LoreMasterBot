@@ -6,6 +6,14 @@ import time
 import threading
 import itertools
 import sys
+
+CONVERSATIONAL_PHRASES = (
+    "thanks", "thank you", "ok", "okay", "cool", "got it",
+    "nice", "great", "awesome", "lol", "haha", "bye", "goodbye",
+    "hello", "hi", "hey", "yes", "no", "sure", "sounds good",
+    "that's helpful", "interesting", "wow"
+)
+
 from types import SimpleNamespace
 
 from src.api import blizzard as blizzard_api
@@ -179,7 +187,7 @@ def run():
             messages=messages,
             model=MODEL_NAME,
             tools=TOOL_SCHEMAS,
-            tool_choice="none" if is_conversational else "auto"
+            tool_choice="none" if is_conversational else "required"
         )
 
         response_message = chat_completion.choices[0].message
@@ -223,8 +231,6 @@ def run():
         # defensive guard in case final response is None/empty
         if not response:
             response = "(no response)"
-        history.append({"role": "assistant", "content": response})
-        history = trim_history(history)
 
         # Prevent model reasoning leakage (local Ollama models often think out loud)
         REASONING_PREFIXES = (
@@ -234,6 +240,9 @@ def run():
         )
         if response and any(response.lower().startswith(prefix) for prefix in REASONING_PREFIXES):
             response = "I'm afraid the ancient scrolls are silent on that specific detail, friend. What other tale from Azeroth would you like to hear?"
+
+        history.append({"role": "assistant", "content": response})
+        history = trim_history(history)
 
         print(f"Loremaster: {response}")
         print("-" * 30)
