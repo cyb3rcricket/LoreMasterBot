@@ -159,7 +159,7 @@ def run():
     print("   • What is the achievement Ahead of the Curve?")
     print("   • How do I get the toy Mr. Pinchy?")
     print("   • Tell me the story of the raid Karazhan")
-    print("   • What does the spell Thunderfury do?")
+    print("   • What does the spell Fireball do?")
     print("-" * 30)
 
     # --- Main Chat Loop ---
