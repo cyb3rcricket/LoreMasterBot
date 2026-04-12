@@ -158,6 +158,10 @@ def run():
     while True:
         user_prompt = input("You: ")
 
+        # Detect purely conversational messages that don't need a tool lookup
+        user_text = user_prompt.strip().lower().rstrip("!.,?")
+        is_conversational = user_text in CONVERSATIONAL_PHRASES or len(user_text.split()) <= 2
+
         # Check for quit before adding to history
         if user_prompt.lower() == "quit":
             print("Goodbye! 👋")
@@ -175,7 +179,7 @@ def run():
             messages=messages,
             model=MODEL_NAME,
             tools=TOOL_SCHEMAS,
-            tool_choice="auto"
+            tool_choice="none" if is_conversational else "auto"
         )
 
         response_message = chat_completion.choices[0].message
@@ -221,5 +225,15 @@ def run():
             response = "(no response)"
         history.append({"role": "assistant", "content": response})
         history = trim_history(history)
+
+        # Prevent model reasoning leakage (local Ollama models often think out loud)
+        REASONING_PREFIXES = (
+            "let me", "first,", "i got", "i need to", "i should", "i'll try",
+            "i will", "i'm going to", "to answer", "since the", "it seems i",
+            "i got sidetracked"
+        )
+        if response and any(response.lower().startswith(prefix) for prefix in REASONING_PREFIXES):
+            response = "I'm afraid the ancient scrolls are silent on that specific detail, friend. What other tale from Azeroth would you like to hear?"
+
         print(f"Loremaster: {response}")
         print("-" * 30)
