@@ -5,7 +5,7 @@ TOOL_SCHEMAS = [
         "type": "function",
         "function": {
             "name": "search_creature",
-            "description": "You MUST call this tool whenever the user asks about a specific WoW creature by name. Always call it first — never answer from memory.",
+            "description": "You MUST call this tool whenever the user asks about a specific WoW creature by name. This is non-negotiable. Always call the tool FIRST — never answer from memory or your training data, even if you think you know it.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -19,7 +19,7 @@ TOOL_SCHEMAS = [
         "type": "function",
         "function": {
             "name": "lookup_item",
-            "description": "You MUST call this tool whenever the user asks about a specific WoW item by name or ID. Always call it first — never answer from memory.",
+            "description": "You MUST call this tool whenever the user asks about a specific WoW item by name or ID. This is non-negotiable. Always call the tool FIRST — never answer from memory or your training data, even if you think you know it.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -33,7 +33,7 @@ TOOL_SCHEMAS = [
         "type": "function",
         "function": {
             "name": "search_item_by_name",
-            "description": "You MUST call this tool whenever the user asks about a specific WoW item by name (not ID). Always call it first — never answer from memory.",
+            "description": "You MUST call this tool whenever the user asks about a specific WoW item by name (not ID). This is non-negotiable. Always call the tool FIRST — never answer from memory or your training data, even if you think you know it.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -47,7 +47,7 @@ TOOL_SCHEMAS = [
         "type": "function",
         "function": {
             "name": "search_quest_by_name",
-            "description": "You MUST call this tool whenever the user asks about a specific WoW quest by name. Always call it first — never answer from memory.",
+            "description": "You MUST call this tool whenever the user asks about a specific WoW quest by name. This is non-negotiable. Always call the tool FIRST — never answer from memory or your training data, even if you think you know it.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -61,7 +61,7 @@ TOOL_SCHEMAS = [
         "type": "function",
         "function": {
             "name": "search_mount_by_name",
-            "description": "You MUST call this tool whenever the user asks about a specific WoW mount by name. Always call it first — never answer from memory.",
+            "description": "You MUST call this tool whenever the user asks about a specific WoW mount by name. This is non-negotiable. Always call the tool FIRST — never answer from memory or your training data, even if you think you know it.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -75,7 +75,7 @@ TOOL_SCHEMAS = [
         "type": "function",
         "function": {
             "name": "search_achievement_by_name",
-            "description": "You MUST call this tool whenever the user asks about a specific WoW achievement by name. Always call it first — never answer from memory.",
+            "description": "You MUST call this tool whenever the user asks about a specific WoW achievement by name. This is non-negotiable. Always call the tool FIRST — never answer from memory or your training data, even if you think you know it.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -89,7 +89,7 @@ TOOL_SCHEMAS = [
         "type": "function",
         "function": {
             "name": "search_spell_by_name",
-            "description": "You MUST call this tool whenever the user asks about a specific WoW spell or ability by name. Always call it first — never answer from memory.",
+            "description": "You MUST call this tool whenever the user asks about a specific WoW spell or ability by name. This is non-negotiable. Always call the tool FIRST — never answer from memory or your training data, even if you think you know it.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -103,7 +103,7 @@ TOOL_SCHEMAS = [
         "type": "function",
         "function": {
             "name": "search_journal_instance_by_name",
-            "description": "You MUST call this tool whenever the user asks about a specific WoW raid, dungeon, or journal instance by name. Always call it first — never answer from memory.",
+            "description": "You MUST call this tool whenever the user asks about a specific WoW raid, dungeon, or journal instance by name. This is non-negotiable. Always call the tool FIRST — never answer from memory or your training data, even if you think you know it.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -117,7 +117,7 @@ TOOL_SCHEMAS = [
         "type": "function",
         "function": {
             "name": "search_faction_by_name",
-            "description": "You MUST call this tool whenever the user asks about a specific WoW reputation faction by name. Always call it first — never answer from memory.",
+            "description": "You MUST call this tool whenever the user asks about a specific WoW reputation faction by name. This is non-negotiable. Always call the tool FIRST — never answer from memory or your training data, even if you think you know it.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -131,7 +131,7 @@ TOOL_SCHEMAS = [
         "type": "function",
         "function": {
             "name": "search_title_by_name",
-            "description": "You MUST call this tool whenever the user asks about a specific WoW title by name. Always call it first — never answer from memory.",
+            "description": "You MUST call this tool whenever the user asks about a specific WoW title by name. This is non-negotiable. Always call the tool FIRST — never answer from memory or your training data, even if you think you know it.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -145,7 +145,7 @@ TOOL_SCHEMAS = [
         "type": "function",
         "function": {
             "name": "search_toy_by_name",
-            "description": "You MUST call this tool whenever the user asks about a specific WoW toy by name. Always call it first — never answer from memory.",
+            "description": "You MUST call this tool whenever the user asks about a specific WoW toy by name. This is non-negotiable. Always call the tool FIRST — never answer from memory or your training data, even if you think you know it.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -159,7 +159,7 @@ TOOL_SCHEMAS = [
         "type": "function",
         "function": {
             "name": "search_pet_by_name",
-            "description": "You MUST call this tool whenever the user asks about a specific WoW battle pet by name. Always call it first — never answer from memory.",
+            "description": "You MUST call this tool whenever the user asks about a specific WoW battle pet by name. This is non-negotiable. Always call the tool FIRST — never answer from memory or your training data, even if you think you know it.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -173,7 +173,7 @@ TOOL_SCHEMAS = [
         "type": "function",
         "function": {
             "name": "search_heirloom_by_name",
-            "description": "You MUST call this tool whenever the user asks about a specific WoW heirloom by name. Always call it first — never answer from memory.",
+            "description": "You MUST call this tool whenever the user asks about a specific WoW heirloom by name. This is non-negotiable. Always call the tool FIRST — never answer from memory or your training data, even if you think you know it.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -187,7 +187,7 @@ TOOL_SCHEMAS = [
         "type": "function",
         "function": {
             "name": "get_wow_token_price",
-            "description": "You MUST call this tool whenever the user asks about the current WoW Token price or gold value of a token. Always call it first — never answer from memory.",
+            "description": "You MUST call this tool whenever the user asks about the current WoW Token price or gold value of a token. This is non-negotiable. Always call the tool FIRST — never answer from memory or your training data, even if you think you know it.",
             "parameters": {
                 "type": "object",
                 "properties": {},

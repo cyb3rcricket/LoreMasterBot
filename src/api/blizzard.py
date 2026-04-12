@@ -63,29 +63,68 @@ def ensure_valid_token():
 
 
 def search_blizzard(search_term, entity_type, access_token):
-    """Searches for an entity and returns the first result's ID."""
+    """Searches for an entity and returns the first result's ID. Note: 'quest' and 'achievement' types are known to have spotty name-search support."""
     key = (entity_type, search_term.lower())
     if key in search_cache:
         return search_cache[key]
 
     url = f"https://us.api.blizzard.com/data/wow/search/{entity_type}"
     headers = {"Authorization": f"Bearer {access_token}"}
-    params = {
-        "namespace": "static-us",
-        "locale": "en_US",
-        "name.en_US": search_term,
-        "_page": 1
-    }
-    try:
-        response = requests.get(url, params=params, headers=headers, timeout=10)
-        response.raise_for_status()
-        results = response.json().get("results")
-        if results:
-            id = results[0]["data"]["id"]
-            search_cache[key] = id
-            return id
-    except Exception as e:
-        print(f"Error during search: {e}")
+
+    if entity_type in ["quest", "achievement"]:
+        # Try with name.en_US first
+        params = {
+            "namespace": "static-us",
+            "locale": "en_US",
+            "name.en_US": search_term,
+            "_page": 1
+        }
+        try:
+            response = requests.get(url, params=params, headers=headers, timeout=10)
+            response.raise_for_status()
+            results = response.json().get("results")
+            if results:
+                id = results[0]["data"]["id"]
+                search_cache[key] = id
+                return id
+        except Exception as e:
+            print(f"Error during search with name.en_US: {e}")
+
+        # If no results, try with name
+        params = {
+            "namespace": "static-us",
+            "locale": "en_US",
+            "name": search_term,
+            "_page": 1
+        }
+        try:
+            response = requests.get(url, params=params, headers=headers, timeout=10)
+            response.raise_for_status()
+            results = response.json().get("results")
+            if results:
+                id = results[0]["data"]["id"]
+                search_cache[key] = id
+                return id
+        except Exception as e:
+            print(f"Error during search with name: {e}")
+    else:
+        # Standard search for other types
+        params = {
+            "namespace": "static-us",
+            "locale": "en_US",
+            "name.en_US": search_term,
+            "_page": 1
+        }
+        try:
+            response = requests.get(url, params=params, headers=headers, timeout=10)
+            response.raise_for_status()
+            results = response.json().get("results")
+            if results:
+                id = results[0]["data"]["id"]
+                search_cache[key] = id
+                return id
+        except Exception as e:
+            print(f"Error during search: {e}")
     return None
 
 
