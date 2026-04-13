@@ -105,9 +105,21 @@ def search_blizzard(search_term, entity_type, access_token):
             results = response.json().get("results")
             print(f"DEBUG: search_blizzard for {entity_type} '{search_term}' with name.en_US returned {len(results) if results else 0} results")
             if results:
-                id = results[0]["data"]["id"]
-                search_cache[key] = id
-                return id
+                # Prefer an exact case-insensitive match on the returned name when possible
+                lowered = search_term.lower()
+                exact_id = None
+                for r in results:
+                    try:
+                        name = r.get("data", {}).get("name", {}).get("en_US")
+                    except Exception:
+                        name = None
+                    if name and name.lower() == lowered:
+                        exact_id = r.get("data", {}).get("id")
+                        break
+                if exact_id is None:
+                    exact_id = results[0]["data"]["id"]
+                search_cache[key] = exact_id
+                return exact_id
         except Exception as e:
             print(f"Error during search with name.en_US: {e}")
 
@@ -125,9 +137,21 @@ def search_blizzard(search_term, entity_type, access_token):
             results = response.json().get("results")
             print(f"DEBUG: search_blizzard for {entity_type} '{search_term}' with name returned {len(results) if results else 0} results")
             if results:
-                id = results[0]["data"]["id"]
-                search_cache[key] = id
-                return id
+                # Prefer an exact case-insensitive match on the returned name when possible
+                lowered = search_term.lower()
+                exact_id = None
+                for r in results:
+                    try:
+                        name = r.get("data", {}).get("name", {}).get("en_US")
+                    except Exception:
+                        name = None
+                    if name and name.lower() == lowered:
+                        exact_id = r.get("data", {}).get("id")
+                        break
+                if exact_id is None:
+                    exact_id = results[0]["data"]["id"]
+                search_cache[key] = exact_id
+                return exact_id
         except Exception as e:
             print(f"Error during search with name: {e}")
     else:
@@ -145,9 +169,21 @@ def search_blizzard(search_term, entity_type, access_token):
             results = response.json().get("results")
             print(f"DEBUG: search_blizzard for {entity_type} '{search_term}' returned {len(results) if results else 0} results")
             if results:
-                id = results[0]["data"]["id"]
-                search_cache[key] = id
-                return id
+                # Prefer an exact case-insensitive match on the returned name when possible
+                lowered = search_term.lower()
+                exact_id = None
+                for r in results:
+                    try:
+                        name = r.get("data", {}).get("name", {}).get("en_US")
+                    except Exception:
+                        name = None
+                    if name and name.lower() == lowered:
+                        exact_id = r.get("data", {}).get("id")
+                        break
+                if exact_id is None:
+                    exact_id = results[0]["data"]["id"]
+                search_cache[key] = exact_id
+                return exact_id
         except Exception as e:
             print(f"Error during search: {e}")
     return None
