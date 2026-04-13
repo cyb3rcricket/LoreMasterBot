@@ -20,7 +20,6 @@ data_cache = {}
 famous_items = {
     "Ashbringer": 13262,
     "Thunderfury": 19019,
-    "Invincible": 118427,  # mount ID example
     "Sulfuras": 17182,
     "Atiesh": 22589,
     "Val'anyr": 46017,
