@@ -210,12 +210,18 @@ def run():
                 if isinstance(tool_call.function.arguments, dict):
                     function_args = tool_call.function.arguments
                     stored_arguments = json.dumps(tool_call.function.arguments)
-                else:
+                elif isinstance(tool_call.function.arguments, str):
                     stored_arguments = tool_call.function.arguments
                     try:
                         function_args = json.loads(tool_call.function.arguments)
                     except (json.JSONDecodeError, TypeError):
                         function_args = None
+                else:
+                    try:
+                        stored_arguments = json.dumps(tool_call.function.arguments)
+                    except (TypeError, ValueError):
+                        stored_arguments = "null"
+                    function_args = None
 
                 if function_args is None:
                     tool_result = "Error parsing tool arguments."

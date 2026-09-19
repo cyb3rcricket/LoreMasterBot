@@ -224,7 +224,7 @@ def test_tool_call_history_serializable_and_correctly_linked(monkeypatch):
         ('{"item_name": "Thunderfury"}', True, {"item_name": "Thunderfury"}, "Thunderfury: 19019", '{"item_name": "Thunderfury"}'),
         ({"item_name": "Thunderfury"}, True, {"item_name": "Thunderfury"}, "Thunderfury: 19019", '{"item_name": "Thunderfury"}'),
         ("{invalid json", False, None, "Error parsing tool arguments.", "{invalid json"),
-        (None, False, None, "Error parsing tool arguments.", None),
+        (None, False, None, "Error parsing tool arguments.", "null"),
     ],
     ids=["valid_json_string", "dict_argument", "malformed_json_string", "none_argument"]
 )
@@ -267,8 +267,9 @@ def test_tool_argument_variants_handling(raw_args, is_valid, expected_handler_ar
     assert assistant_entry["tool_calls"][0]["id"] == call_id
     stored_arguments = assistant_entry["tool_calls"][0]["function"]["arguments"]
     assert stored_arguments == expected_stored_args
+    assert isinstance(stored_arguments, str)
+    assert not isinstance(stored_arguments, (dict, type(None))), "no raw non-string value may be stored"
     if isinstance(raw_args, dict):
-        assert isinstance(stored_arguments, str), "dict arguments must be stored as a JSON string"
         assert not isinstance(stored_arguments, dict)
 
     # History must remain JSON-serializable
