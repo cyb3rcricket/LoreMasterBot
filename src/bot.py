@@ -6,6 +6,7 @@ import time
 import threading
 import itertools
 import sys
+import uuid
 
 CONVERSATIONAL_PHRASES = (
     "thanks", "thank you", "ok", "okay", "cool", "got it",
@@ -105,7 +106,7 @@ def parse_tool_calls(response_message):
                 if isinstance(parsed, list) and parsed:
                     for item in parsed:
                         if isinstance(item, dict) and "name" in item and "arguments" in item:
-                            tool_calls.append(ToolCall(name=item["name"], arguments=json.dumps(item["arguments"])))
+                            tool_calls.append(ToolCall(id=f"call_{uuid.uuid4().hex}", name=item["name"], arguments=json.dumps(item["arguments"])))
                             break  # Stop after finding the first valid tool call in this match
             except Exception:
                 continue
@@ -214,7 +215,20 @@ def run():
                     tool_result = f"Unknown tool: {function_name}"
 
                 # Add the tool result back to history and get final response
-                history.append({"role": "assistant", "content": None, "tool_calls": [tool_call]})
+                history.append({
+                    "role": "assistant",
+                    "content": None,
+                    "tool_calls": [
+                        {
+                            "id": tool_call.id,
+                            "type": "function",
+                            "function": {
+                                "name": tool_call.function.name,
+                                "arguments": tool_call.function.arguments
+                            }
+                        }
+                    ]
+                })
                 history.append({"role": "tool", "content": tool_result, "tool_call_id": tool_call.id})
 
             # Final LLM call with tool results
