@@ -209,7 +209,9 @@ def run():
                 function_name = tool_call.function.name
                 if isinstance(tool_call.function.arguments, dict):
                     function_args = tool_call.function.arguments
+                    stored_arguments = json.dumps(tool_call.function.arguments)
                 else:
+                    stored_arguments = tool_call.function.arguments
                     try:
                         function_args = json.loads(tool_call.function.arguments)
                     except (json.JSONDecodeError, TypeError):
@@ -234,7 +236,7 @@ def run():
                             "type": "function",
                             "function": {
                                 "name": tool_call.function.name,
-                                "arguments": tool_call.function.arguments
+                                "arguments": stored_arguments
                             }
                         }
                     ]

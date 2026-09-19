@@ -19,6 +19,12 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+# Fallback dummy credentials to ensure tests run without .env or real credentials
+if not os.environ.get("BLIZZARD_CLIENT_ID"):
+    os.environ["BLIZZARD_CLIENT_ID"] = "mock_client_id"
+if not os.environ.get("BLIZZARD_CLIENT_SECRET"):
+    os.environ["BLIZZARD_CLIENT_SECRET"] = "mock_client_secret"
+
 # Ensure importing src.bot does not make real Blizzard network calls or require Ollama
 with patch("src.api.blizzard.get_access_token", return_value=("mock_token", 3600)):
     import src.bot
@@ -213,16 +219,16 @@ def test_tool_call_history_serializable_and_correctly_linked(monkeypatch):
 # ============================================================================
 
 @pytest.mark.parametrize(
-    "raw_args,is_valid,expected_handler_arg,expected_tool_result",
+    "raw_args,is_valid,expected_handler_arg,expected_tool_result,expected_stored_args",
     [
-        ('{"item_name": "Thunderfury"}', True, {"item_name": "Thunderfury"}, "Thunderfury: 19019"),
-        ({"item_name": "Thunderfury"}, True, {"item_name": "Thunderfury"}, "Thunderfury: 19019"),
-        ("{invalid json", False, None, "Error parsing tool arguments."),
-        (None, False, None, "Error parsing tool arguments."),
+        ('{"item_name": "Thunderfury"}', True, {"item_name": "Thunderfury"}, "Thunderfury: 19019", '{"item_name": "Thunderfury"}'),
+        ({"item_name": "Thunderfury"}, True, {"item_name": "Thunderfury"}, "Thunderfury: 19019", '{"item_name": "Thunderfury"}'),
+        ("{invalid json", False, None, "Error parsing tool arguments.", "{invalid json"),
+        (None, False, None, "Error parsing tool arguments.", None),
     ],
     ids=["valid_json_string", "dict_argument", "malformed_json_string", "none_argument"]
 )
-def test_tool_argument_variants_handling(raw_args, is_valid, expected_handler_arg, expected_tool_result, monkeypatch):
+def test_tool_argument_variants_handling(raw_args, is_valid, expected_handler_arg, expected_tool_result, expected_stored_args, monkeypatch):
     """Valid, dict, malformed, and None tool arguments must not crash the turn and preserve history linkage."""
     call_id = "call_arg_test_1234567890abcdef1234"
     tool_call = ToolCall(id=call_id, name="lookup_item", arguments=raw_args)
@@ -259,7 +265,11 @@ def test_tool_argument_variants_handling(raw_args, is_valid, expected_handler_ar
     # Check assistant tool_calls entry
     assistant_entry = next(h for h in src.bot.history if h.get("role") == "assistant" and "tool_calls" in h)
     assert assistant_entry["tool_calls"][0]["id"] == call_id
-    assert assistant_entry["tool_calls"][0]["function"]["arguments"] == raw_args
+    stored_arguments = assistant_entry["tool_calls"][0]["function"]["arguments"]
+    assert stored_arguments == expected_stored_args
+    if isinstance(raw_args, dict):
+        assert isinstance(stored_arguments, str), "dict arguments must be stored as a JSON string"
+        assert not isinstance(stored_arguments, dict)
 
     # History must remain JSON-serializable
     assert json.dumps(src.bot.history) is not None
