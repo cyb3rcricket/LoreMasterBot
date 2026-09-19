@@ -17,17 +17,17 @@ CONVERSATIONAL_PHRASES = (
 
 from types import SimpleNamespace
 
+try:
+    from src.config import SYSTEM_PROMPT, MODEL_NAME, MissingCredentialsError
+except Exception as e:
+    if type(e).__name__ == "MissingCredentialsError":
+        sys.exit(1)
+    raise
+
 from src.api import blizzard as blizzard_api
 from src.api.blizzard import ensure_valid_token, get_access_token
-from src.config import MissingCredentialsError
 from src.tools.handlers import TOOL_HANDLERS
 from src.tools.schemas import TOOL_SCHEMAS
-
-try:
-    from src.config import SYSTEM_PROMPT, MODEL_NAME
-except MissingCredentialsError:
-    import sys
-    sys.exit(1)
 
 
 # --- Get Blizzard access token once when the script starts ---
@@ -169,7 +169,7 @@ def run():
 
         # Detect purely conversational messages that don't need a tool lookup
         user_text = user_prompt.strip().lower().rstrip("!.,?")
-        is_conversational = user_text in CONVERSATIONAL_PHRASES or len(user_text.split()) <= 2
+        is_conversational = user_text in CONVERSATIONAL_PHRASES
 
         # Check for quit before adding to history
         if user_prompt.lower() == "quit":
@@ -202,17 +202,22 @@ def run():
 
             for tool_call in tool_calls:
                 function_name = tool_call.function.name
-                try:
-                    function_args = json.loads(tool_call.function.arguments)
-                except json.JSONDecodeError:
-                    tool_result = "Error parsing tool arguments."
-                    continue
-
-                access_token = ensure_valid_token()
-                if function_name in TOOL_HANDLERS:
-                    tool_result = TOOL_HANDLERS[function_name](function_args, access_token)
+                if isinstance(tool_call.function.arguments, dict):
+                    function_args = tool_call.function.arguments
                 else:
-                    tool_result = f"Unknown tool: {function_name}"
+                    try:
+                        function_args = json.loads(tool_call.function.arguments)
+                    except (json.JSONDecodeError, TypeError):
+                        function_args = None
+
+                if function_args is None:
+                    tool_result = "Error parsing tool arguments."
+                else:
+                    access_token = ensure_valid_token()
+                    if function_name in TOOL_HANDLERS:
+                        tool_result = TOOL_HANDLERS[function_name](function_args, access_token)
+                    else:
+                        tool_result = f"Unknown tool: {function_name}"
 
                 # Add the tool result back to history and get final response
                 history.append({
