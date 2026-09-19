@@ -19,7 +19,7 @@ TOOL_SCHEMAS = [
         "type": "function",
         "function": {
             "name": "lookup_item",
-            "description": "You MUST call this tool whenever the user asks about a specific WoW item by name or ID. This is non-negotiable. Always call the tool FIRST — never answer from memory or your training data, even if you think you know it.",
+            "description": "You MUST call this tool whenever the user asks about a specific WoW item by its numeric item ID (e.g. '19019'). Do NOT use this tool for item names; use search_item_by_name instead. This is non-negotiable. Always call the tool FIRST — never answer from memory or your training data, even if you think you know it.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -33,7 +33,7 @@ TOOL_SCHEMAS = [
         "type": "function",
         "function": {
             "name": "search_item_by_name",
-            "description": "You MUST call this tool whenever the user asks about a specific WoW item by name (not ID). This is non-negotiable. Always call the tool FIRST — never answer from memory or your training data, even if you think you know it.",
+            "description": "You MUST call this tool whenever the user asks about a specific WoW item by name (e.g. 'Phantom Blade' or 'Thunderfury'). Do NOT use this tool for numeric item IDs; use lookup_item instead. This is non-negotiable. Always call the tool FIRST — never answer from memory or your training data, even if you think you know it.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -51,7 +51,7 @@ TOOL_SCHEMAS = [
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "search_term": {"type": "string", "description": "The name of the quest, e.g. 'The Lich King’s Fall' or 'Phantom Blade'"}
+                    "search_term": {"type": "string", "description": "The name of the quest, e.g. 'The Lich King’s Fall' or 'The Green Hills of Stranglethorn'"}
                 },
                 "required": ["search_term"]
             }
@@ -65,7 +65,7 @@ TOOL_SCHEMAS = [
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "search_term": {"type": "string", "description": "The name of the mount, e.g. 'Invincible' or 'Phantom Blade'"}
+                    "search_term": {"type": "string", "description": "The name of the mount, e.g. 'Invincible' or 'Mimiron\\'s Head'"}
                 },
                 "required": ["search_term"]
             }
@@ -93,7 +93,7 @@ TOOL_SCHEMAS = [
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "search_term": {"type": "string", "description": "The name of the spell or ability, e.g. 'Fireball' or 'Thunderfury'"}
+                    "search_term": {"type": "string", "description": "The name of the spell or ability, e.g. 'Fireball' or 'Frostbolt'"}
                 },
                 "required": ["search_term"]
             }

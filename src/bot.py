@@ -107,7 +107,6 @@ def parse_tool_calls(response_message):
                     for item in parsed:
                         if isinstance(item, dict) and "name" in item and "arguments" in item:
                             tool_calls.append(ToolCall(id=f"call_{uuid.uuid4().hex}", name=item["name"], arguments=json.dumps(item["arguments"])))
-                            break  # Stop after finding the first valid tool call in this match
             except Exception:
                 continue
         # Remove the tool call JSON from the content
@@ -204,59 +203,77 @@ def run():
         if tool_calls:
             spinner = Spinner("Fetching lore from Azeroth...")
             spinner.start()
+            try:
+                assistant_tool_calls = []
+                tool_results = []
 
-            for tool_call in tool_calls:
-                function_name = tool_call.function.name
-                if isinstance(tool_call.function.arguments, dict):
-                    function_args = tool_call.function.arguments
-                    stored_arguments = json.dumps(tool_call.function.arguments)
-                elif isinstance(tool_call.function.arguments, str):
-                    stored_arguments = tool_call.function.arguments
-                    try:
-                        function_args = json.loads(tool_call.function.arguments)
-                    except (json.JSONDecodeError, TypeError):
-                        function_args = None
-                else:
-                    try:
+                for tool_call in tool_calls:
+                    function_name = tool_call.function.name
+                    if isinstance(tool_call.function.arguments, dict):
+                        function_args = tool_call.function.arguments
                         stored_arguments = json.dumps(tool_call.function.arguments)
-                    except (TypeError, ValueError):
-                        stored_arguments = "null"
-                    function_args = None
-
-                if function_args is None:
-                    tool_result = "Error parsing tool arguments."
-                else:
-                    access_token = ensure_valid_token()
-                    if function_name in TOOL_HANDLERS:
-                        tool_result = TOOL_HANDLERS[function_name](function_args, access_token)
+                    elif isinstance(tool_call.function.arguments, str):
+                        stored_arguments = tool_call.function.arguments
+                        try:
+                            function_args = json.loads(tool_call.function.arguments)
+                            if not isinstance(function_args, dict):
+                                function_args = None
+                        except (json.JSONDecodeError, TypeError):
+                            function_args = None
                     else:
-                        tool_result = f"Unknown tool: {function_name}"
+                        try:
+                            stored_arguments = json.dumps(tool_call.function.arguments)
+                        except (TypeError, ValueError):
+                            stored_arguments = "null"
+                        function_args = None
 
-                # Add the tool result back to history and get final response
+                    call_id = tool_call.id if getattr(tool_call, "id", None) else f"call_{uuid.uuid4().hex}"
+                    assistant_tool_calls.append({
+                        "id": call_id,
+                        "type": "function",
+                        "function": {
+                            "name": function_name,
+                            "arguments": stored_arguments
+                        }
+                    })
+
+                    if function_args is None or not isinstance(function_args, dict):
+                        tool_result = "Error parsing tool arguments."
+                    else:
+                        access_token = ensure_valid_token()
+                        if function_name in TOOL_HANDLERS:
+                            try:
+                                tool_result = TOOL_HANDLERS[function_name](function_args, access_token)
+                            except Exception as e:
+                                print(f"Error executing tool {function_name}: {e}")
+                                tool_result = f"Error executing tool: {function_name}"
+                        else:
+                            tool_result = f"Unknown tool: {function_name}"
+
+                    tool_results.append({
+                        "role": "tool",
+                        "content": tool_result,
+                        "tool_call_id": call_id
+                    })
+
+                # Append one assistant history entry containing all tool calls
                 history.append({
                     "role": "assistant",
                     "content": None,
-                    "tool_calls": [
-                        {
-                            "id": tool_call.id,
-                            "type": "function",
-                            "function": {
-                                "name": tool_call.function.name,
-                                "arguments": stored_arguments
-                            }
-                        }
-                    ]
+                    "tool_calls": assistant_tool_calls
                 })
-                history.append({"role": "tool", "content": tool_result, "tool_call_id": tool_call.id})
+                # Append one tool-result entry per call
+                for result_entry in tool_results:
+                    history.append(result_entry)
 
-            # Final LLM call with tool results
-            final_completion = client.chat.completions.create(
-                messages=[{"role": "system", "content": SYSTEM_PROMPT}] + history,
-                model=MODEL_NAME
-            )
-            response = final_completion.choices[0].message.content
-
-            spinner.stop()
+                # Final LLM call with tool results
+                final_completion = client.chat.completions.create(
+                    messages=[{"role": "system", "content": SYSTEM_PROMPT}] + history,
+                    model=MODEL_NAME
+                )
+                response = final_completion.choices[0].message.content
+            finally:
+                spinner.stop()
         else:
             response = response_message.content
 

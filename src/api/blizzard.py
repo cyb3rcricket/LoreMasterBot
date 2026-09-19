@@ -6,6 +6,11 @@ import requests
 from src.config import CLIENT_ID, CLIENT_SECRET
 
 
+# Constants for API timeouts and TTL
+BLIZZARD_API_TIMEOUT = 10
+BLIZZARD_REQUEST_TIMEOUT = BLIZZARD_API_TIMEOUT
+WOW_TOKEN_CACHE_TTL_SECONDS = 60
+
 # Global variables for token management
 blizzard_token = None
 token_expiry = 0   # Unix timestamp when the current token expires
@@ -13,18 +18,20 @@ token_expiry = 0   # Unix timestamp when the current token expires
 # Global caches to avoid repeated API calls
 # search_cache: key = (entity_type, search_term.lower()) -> id (from search results)
 # data_cache: key = (data_type, id) -> full json data (from detailed fetches)
+# wow_token_cache: {"data": result, "timestamp": float} -> cached token price with TTL
 search_cache = {}
 data_cache = {}
+wow_token_cache = {"data": None, "timestamp": 0.0}
 
-# Famous items fallback for items that may not search well
+# Famous items fallback for items that may not search well (normalized lowercase keys)
 famous_items = {
-    "Ashbringer": 13262,
-    "Thunderfury": 19019,
-    "Sulfuras": 17182,
-    "Atiesh": 22589,
-    "Val'anyr": 46017,
-    "Shadowmourne": 49623,
-    "Dragonwrath": 78495,
+    "ashbringer": 13262,
+    "thunderfury": 19019,
+    "sulfuras": 17182,
+    "atiesh": 22589,
+    "val'anyr": 46017,
+    "shadowmourne": 49623,
+    "dragonwrath": 78495,
 }
 
 
@@ -37,7 +44,7 @@ def get_access_token():
     # Retry logic: up to 3 attempts with 2-second delays between retries for resilience
     for attempt in range(3):
         try:
-            response = requests.post(url, data=data, auth=auth)
+            response = requests.post(url, data=data, auth=auth, timeout=BLIZZARD_API_TIMEOUT)
             response.raise_for_status()
             json_data = response.json()
             token = json_data.get("access_token")
@@ -75,21 +82,28 @@ def ensure_valid_token():
 
 def search_blizzard(search_term, entity_type, access_token):
     """Searches for an entity and returns the first result's ID. Note: 'quest' and 'achievement' types are known to have spotty name-search support."""
-    if entity_type == "item" and search_term in famous_items:
-        item_id = famous_items[search_term]
-        print(f"DEBUG: Using famous item fallback for '{search_term}' → ID {item_id}")
-        key = (entity_type, search_term.lower())
-        search_cache[key] = item_id
-        return item_id
-    
-    key = (entity_type, search_term.lower())
+    if not search_term or not isinstance(search_term, str):
+        return None
+
+    normalized_type = entity_type.lower() if isinstance(entity_type, str) else str(entity_type)
+    normalized_term = search_term.strip().lower()
+    if normalized_type == "item":
+        famous_items_normalized = {str(k).strip().lower(): v for k, v in famous_items.items()}
+        if normalized_term in famous_items_normalized:
+            item_id = famous_items_normalized[normalized_term]
+            print(f"DEBUG: Using famous item fallback for '{search_term}' → ID {item_id}")
+            key = (normalized_type, normalized_term)
+            search_cache[key] = item_id
+            return item_id
+
+    key = (normalized_type, normalized_term)
     if key in search_cache:
         return search_cache[key]
 
-    url = f"https://us.api.blizzard.com/data/wow/search/{entity_type}"
+    url = f"https://us.api.blizzard.com/data/wow/search/{normalized_type}"
     headers = {"Authorization": f"Bearer {access_token}"}
 
-    if entity_type in ["quest", "achievement"]:
+    if normalized_type in ["quest", "achievement"]:
         # Try with name.en_US first
         params = {
             "namespace": "static-us",
@@ -99,7 +113,7 @@ def search_blizzard(search_term, entity_type, access_token):
             "_pageSize": 5
         }
         try:
-            response = requests.get(url, params=params, headers=headers, timeout=10)
+            response = requests.get(url, params=params, headers=headers, timeout=BLIZZARD_API_TIMEOUT)
             response.raise_for_status()
             results = response.json().get("results")
             print(f"DEBUG: search_blizzard for {entity_type} '{search_term}' with name.en_US returned {len(results) if results else 0} results")
@@ -131,7 +145,7 @@ def search_blizzard(search_term, entity_type, access_token):
             "_pageSize": 5
         }
         try:
-            response = requests.get(url, params=params, headers=headers, timeout=10)
+            response = requests.get(url, params=params, headers=headers, timeout=BLIZZARD_API_TIMEOUT)
             response.raise_for_status()
             results = response.json().get("results")
             print(f"DEBUG: search_blizzard for {entity_type} '{search_term}' with name returned {len(results) if results else 0} results")
@@ -163,7 +177,7 @@ def search_blizzard(search_term, entity_type, access_token):
             "_pageSize": 5
         }
         try:
-            response = requests.get(url, params=params, headers=headers, timeout=10)
+            response = requests.get(url, params=params, headers=headers, timeout=BLIZZARD_API_TIMEOUT)
             response.raise_for_status()
             results = response.json().get("results")
             print(f"DEBUG: search_blizzard for {entity_type} '{search_term}' returned {len(results) if results else 0} results")
@@ -190,7 +204,8 @@ def search_blizzard(search_term, entity_type, access_token):
 
 def get_item_data(item_id, access_token):
     """Fetches data for a specific item using the access token."""
-    key = ("item", item_id)
+    cache_id = int(str(item_id).strip()) if str(item_id).strip().isdigit() else item_id
+    key = ("item", cache_id)
     if key in data_cache:
         return data_cache[key]
 
@@ -198,7 +213,7 @@ def get_item_data(item_id, access_token):
     headers = {"Authorization": f"Bearer {access_token}"}
     params = {"namespace": "static-us", "locale": "en_US"}
     try:
-        response = requests.get(url, params=params, headers=headers)
+        response = requests.get(url, params=params, headers=headers, timeout=BLIZZARD_API_TIMEOUT)
         response.raise_for_status()
         data = response.json()
         data_cache[key] = data
@@ -218,7 +233,7 @@ def get_creature_data(creature_id, access_token):
     headers = {"Authorization": f"Bearer {access_token}"}
     params = {"namespace": "static-us", "locale": "en_US"}
     try:
-        response = requests.get(url, params=params, headers=headers)
+        response = requests.get(url, params=params, headers=headers, timeout=BLIZZARD_API_TIMEOUT)
         response.raise_for_status()
         data = response.json()
         data_cache[key] = data
@@ -238,7 +253,7 @@ def get_quest_data(quest_id, access_token):
     headers = {"Authorization": f"Bearer {access_token}"}
     params = {"namespace": "static-us", "locale": "en_US"}
     try:
-        response = requests.get(url, params=params, headers=headers)
+        response = requests.get(url, params=params, headers=headers, timeout=BLIZZARD_API_TIMEOUT)
         response.raise_for_status()
         data = response.json()
         data_cache[key] = data
@@ -258,7 +273,7 @@ def get_mount_data(mount_id, access_token):
     headers = {"Authorization": f"Bearer {access_token}"}
     params = {"namespace": "static-us", "locale": "en_US"}
     try:
-        response = requests.get(url, params=params, headers=headers)
+        response = requests.get(url, params=params, headers=headers, timeout=BLIZZARD_API_TIMEOUT)
         response.raise_for_status()
         data = response.json()
         data_cache[key] = data
@@ -278,7 +293,7 @@ def get_achievement_data(achievement_id, access_token):
     headers = {"Authorization": f"Bearer {access_token}"}
     params = {"namespace": "static-us", "locale": "en_US"}
     try:
-        response = requests.get(url, params=params, headers=headers)
+        response = requests.get(url, params=params, headers=headers, timeout=BLIZZARD_API_TIMEOUT)
         response.raise_for_status()
         data = response.json()
         data_cache[key] = data
@@ -298,7 +313,7 @@ def get_spell_data(spell_id, access_token):
     headers = {"Authorization": f"Bearer {access_token}"}
     params = {"namespace": "static-us", "locale": "en_US"}
     try:
-        response = requests.get(url, params=params, headers=headers)
+        response = requests.get(url, params=params, headers=headers, timeout=BLIZZARD_API_TIMEOUT)
         response.raise_for_status()
         data = response.json()
         data_cache[key] = data
@@ -318,7 +333,7 @@ def get_journal_instance_data(instance_id, access_token):
     headers = {"Authorization": f"Bearer {access_token}"}
     params = {"namespace": "static-us", "locale": "en_US"}
     try:
-        response = requests.get(url, params=params, headers=headers)
+        response = requests.get(url, params=params, headers=headers, timeout=BLIZZARD_API_TIMEOUT)
         response.raise_for_status()
         data = response.json()
         data_cache[key] = data
@@ -338,7 +353,7 @@ def get_reputation_faction_data(faction_id, access_token):
     headers = {"Authorization": f"Bearer {access_token}"}
     params = {"namespace": "static-us", "locale": "en_US"}
     try:
-        response = requests.get(url, params=params, headers=headers)
+        response = requests.get(url, params=params, headers=headers, timeout=BLIZZARD_API_TIMEOUT)
         response.raise_for_status()
         data = response.json()
         data_cache[key] = data
@@ -358,7 +373,7 @@ def get_title_data(title_id, access_token):
     headers = {"Authorization": f"Bearer {access_token}"}
     params = {"namespace": "static-us", "locale": "en_US"}
     try:
-        response = requests.get(url, params=params, headers=headers)
+        response = requests.get(url, params=params, headers=headers, timeout=BLIZZARD_API_TIMEOUT)
         response.raise_for_status()
         data = response.json()
         data_cache[key] = data
@@ -378,7 +393,7 @@ def get_toy_data(toy_id, access_token):
     headers = {"Authorization": f"Bearer {access_token}"}
     params = {"namespace": "static-us", "locale": "en_US"}
     try:
-        response = requests.get(url, params=params, headers=headers)
+        response = requests.get(url, params=params, headers=headers, timeout=BLIZZARD_API_TIMEOUT)
         response.raise_for_status()
         data = response.json()
         data_cache[key] = data
@@ -398,7 +413,7 @@ def get_pet_data(pet_id, access_token):
     headers = {"Authorization": f"Bearer {access_token}"}
     params = {"namespace": "static-us", "locale": "en_US"}
     try:
-        response = requests.get(url, params=params, headers=headers)
+        response = requests.get(url, params=params, headers=headers, timeout=BLIZZARD_API_TIMEOUT)
         response.raise_for_status()
         data = response.json()
         data_cache[key] = data
@@ -418,7 +433,7 @@ def get_heirloom_data(heirloom_id, access_token):
     headers = {"Authorization": f"Bearer {access_token}"}
     params = {"namespace": "static-us", "locale": "en_US"}
     try:
-        response = requests.get(url, params=params, headers=headers)
+        response = requests.get(url, params=params, headers=headers, timeout=BLIZZARD_API_TIMEOUT)
         response.raise_for_status()
         data = response.json()
         data_cache[key] = data
@@ -429,22 +444,26 @@ def get_heirloom_data(heirloom_id, access_token):
 
 
 def get_wow_token_price(access_token):
-    """Fetches the current WoW Token price using the dynamic namespace."""
-    key = ("wow_token", "price")
-    if key in data_cache:
-        return data_cache[key]
+    """Fetches the current WoW Token price using the dynamic namespace with TTL caching."""
+    now = time.time()
+    if wow_token_cache["data"] is not None and 0 <= (now - wow_token_cache["timestamp"]) < WOW_TOKEN_CACHE_TTL_SECONDS:
+        return wow_token_cache["data"]
 
     url = "https://us.api.blizzard.com/data/wow/token/"
     headers = {"Authorization": f"Bearer {access_token}"}
     params = {"namespace": "dynamic-us", "locale": "en_US"}
     try:
-        response = requests.get(url, params=params, headers=headers)
+        response = requests.get(url, params=params, headers=headers, timeout=BLIZZARD_API_TIMEOUT)
         response.raise_for_status()
         data = response.json()
-        price_in_copper = data.get("price", 0)
-        price_in_gold = price_in_copper // 10000
+        price_in_copper = data.get("price")
+        if not isinstance(price_in_copper, (int, float)) or price_in_copper <= 0:
+            print("Error: Invalid or missing price in WoW Token response")
+            return None
+        price_in_gold = int(price_in_copper) // 10000
         result = {"price": price_in_gold, "raw_data": data}
-        data_cache[key] = result
+        wow_token_cache["data"] = result
+        wow_token_cache["timestamp"] = now
         return result
     except Exception as e:
         print(f"Error getting WoW Token price: {e}")
