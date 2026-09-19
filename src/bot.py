@@ -149,6 +149,12 @@ def trim_history(history, max_turns=7):
     return history[keep_from:]
 
 
+def is_conversational_prompt(user_prompt):
+    """Detect purely conversational messages that don't need a tool lookup."""
+    user_text = user_prompt.strip().lower().rstrip("!.,?")
+    return user_text in CONVERSATIONAL_PHRASES
+
+
 def run():
     global history
 
@@ -168,8 +174,7 @@ def run():
         user_prompt = input("You: ")
 
         # Detect purely conversational messages that don't need a tool lookup
-        user_text = user_prompt.strip().lower().rstrip("!.,?")
-        is_conversational = user_text in CONVERSATIONAL_PHRASES
+        is_conversational = is_conversational_prompt(user_prompt)
 
         # Check for quit before adding to history
         if user_prompt.lower() == "quit":
