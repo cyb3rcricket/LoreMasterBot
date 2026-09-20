@@ -1,4 +1,13 @@
-"""Tool-call handlers and dispatcher mapping for LoreMasterBot."""
+"""Turn a model's tool request into a text result.
+
+A handler is a Python function the chat loop runs when the model names a
+tool. Handlers never print the Loremaster's spoken reply. They return a
+string. That string is stored as a tool message, then the model writes the
+user-facing answer from it.
+
+TOOL_HANDLERS is the dispatcher: tool name → function. The chat loop looks
+up the name and calls the function with (arguments_dict, access_token).
+"""
 from src.api.blizzard import (
     get_achievement_data,
     get_creature_data,
@@ -17,6 +26,8 @@ from src.api.blizzard import (
 )
 
 
+# Shared ending of the not-found message. The wording is strict on purpose:
+# a small local model will invent lore unless the tool result forbids it.
 _NOT_FOUND_SUFFIX = (
     "in the Blizzard API. You MUST tell the user that this exact entity could not be found "
     "in official records. You MUST NOT invent, fabricate, guess, or add any lore, stats, or "
@@ -26,15 +37,23 @@ _NOT_FOUND_SUFFIX = (
 
 
 def _not_found(term, *, as_item_id=False):
+    """Build the official not-found tool result for a name or numeric item ID."""
     label = f"item ID '{term}'" if as_item_id else f"'{term}'"
     return f"TOOL RESULT: NO OFFICIAL DATA FOUND for {label} {_NOT_FOUND_SUFFIX}"
 
 
 def _unavailable(noun):
+    """Tell the model the Blizzard login or network is down."""
     return f"The Blizzard API is currently unavailable, so I cannot look up {noun} information."
 
 
 def _search_and_fetch(function_args, access_token, entity_type, fetch_fn, result_label, noun):
+    """Shared path for name search → ID fetch → success or not-found text.
+
+    Most tools do the same four steps. Keeping them here avoids twelve copies
+    drifting apart. lookup_item and get_wow_token_price stay separate because
+    they do not follow this search-by-name pattern.
+    """
     if not access_token:
         return _unavailable(noun)
     search_term = function_args.get("search_term")
@@ -50,6 +69,11 @@ def handle_search_creature(function_args, access_token):
 
 
 def handle_lookup_item(function_args, access_token):
+    """Look up one item by numeric ID only.
+
+    Separate from search_item_by_name so a name like Thunderfury is never
+    sent to the item-by-ID URL. Non-numeric values must not call the API.
+    """
     if not access_token:
         return _unavailable("item")
     if not isinstance(function_args, dict):
@@ -62,6 +86,7 @@ def handle_lookup_item(function_args, access_token):
 
 
 def handle_search_item_by_name(function_args, access_token):
+    """Look up an item by display name, never by numeric ID."""
     if not access_token:
         return _unavailable("item")
     if not isinstance(function_args, dict):
@@ -113,6 +138,7 @@ def handle_search_heirloom_by_name(function_args, access_token):
 
 
 def handle_get_wow_token_price(function_args, access_token):
+    """Return the current token price in gold, or a short failure string."""
     if not access_token:
         return "The Blizzard API is currently unavailable, so I cannot look up the WoW Token price."
     token_data = get_wow_token_price(access_token)

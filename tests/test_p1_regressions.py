@@ -1,11 +1,11 @@
-"""Regression tests for LoreMasterBot P1 reliability hardening.
+"""P1 regression tests: reliability hardening after the first crash fixes.
 
-Covers:
-1. Blizzard API request timeouts and safe OAuth retries.
-2. WoW Token price cache TTL and invalid-price handling.
-3. Case-insensitive famous item fallback.
-4. Item tool contract / schema mismatch.
-5. Multiple tool-call history, isolation, and fallback parsing.
+These tests lock timeouts, token-price caching, famous-item casing,
+item-name vs item-ID contracts, and multi-tool history shape. Network
+calls are replaced with MagicMock so pytest never needs the internet.
+
+Cache tests replace time.time so a 60-second TTL can be proven without
+sleeping for a minute.
 """
 
 import json
@@ -47,6 +47,8 @@ def reset_test_state(monkeypatch):
 # ============================================================================
 # 1. BLIZZARD API REQUEST TIMEOUTS
 # ============================================================================
+# Every outbound request must pass timeout=BLIZZARD_API_TIMEOUT. A forgotten
+# timeout can hang the CLI. OAuth must retry three times, then return None.
 
 def test_outbound_blizzard_requests_use_timeout_constant(monkeypatch):
     """OAuth, search, entity fetch, and token-price requests must pass the shared timeout."""
@@ -101,6 +103,9 @@ def test_entity_fetch_timeout_fails_safely(monkeypatch):
 # ============================================================================
 # 2. WOW TOKEN PRICE CACHE TTL
 # ============================================================================
+# time.time is replaced so "30 seconds later" and "after TTL" can be tested
+# instantly. A hit must not call the network. A miss must. Bad prices must
+# not be cached as 0 gold.
 
 def test_wow_token_cache_hit_before_ttl_expiration(monkeypatch):
     """Within TTL, repeated requests must return cached data without extra network calls."""
@@ -172,6 +177,8 @@ def test_wow_token_fetch_failure_after_ttl_returns_none(monkeypatch):
 # ============================================================================
 # 3. CASE-INSENSITIVE FAMOUS ITEM FALLBACK
 # ============================================================================
+# Users type Thunderfury, THUNDERFURY, or padded spaces. None of those
+# should hit the network if the name is in famous_items.
 
 @pytest.mark.parametrize("name,expected_id", list(blizzard.famous_items.items()))
 @pytest.mark.parametrize("variant", ["plain", "upper", "mixed", "padded"])
@@ -198,6 +205,8 @@ def test_famous_item_fallback_is_case_insensitive(name, expected_id, variant, mo
 # ============================================================================
 # 4. ITEM TOOL CONTRACT / SCHEMA MISMATCH
 # ============================================================================
+# lookup_item is numeric ID only. search_item_by_name is display name only.
+# Mixing those contracts was a real model/tool bug.
 
 def test_lookup_item_schema_requires_item_id_and_forbids_name():
     """lookup_item schema must strictly describe numeric item ID lookup."""
@@ -266,6 +275,9 @@ def test_handle_search_item_by_name_contract(monkeypatch):
 # ============================================================================
 # 5. MULTIPLE TOOL CALL HISTORY
 # ============================================================================
+# Required shape:
+#   user → one assistant (both tool_calls) → tool A → tool B → final assistant
+# A malformed call must not stop a valid sibling call.
 
 def test_multiple_tool_calls_stored_in_single_assistant_message(monkeypatch):
     """Multiple tool calls share one assistant history entry, preserve order, and stay serializable."""

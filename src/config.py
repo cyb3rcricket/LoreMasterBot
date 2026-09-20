@@ -1,10 +1,19 @@
-# Configuration and prompt definitions for LoreMasterBot.
+# Settings and the character prompt for LoreMasterBot.
+#
+# This module is imported by the rest of the program. It must not talk to the
+# network. It only loads secrets from the environment and defines the text that
+# tells the language model how to behave.
 import os
 
 from dotenv import load_dotenv
 
 
-# Load environment variables from .env file (much safer than hardcoding keys)
+# Environment variables are named settings stored outside the program, usually
+# in a `.env` file or the operating system. That keeps secret keys out of the
+# source code, so they are not committed to git by accident.
+#
+# load_dotenv() looks for a `.env` file and copies its values into os.environ
+# if those names are not already set. os.getenv(...) then reads one name.
 load_dotenv()
 
 # Get Blizzard credentials from .env (create a .env file in the same folder)
@@ -13,7 +22,11 @@ CLIENT_SECRET = os.getenv("BLIZZARD_CLIENT_SECRET")
 
 
 def print_missing_credentials_warning():
-    """Print the user-facing warning used when Blizzard credentials are missing."""
+    """Print the user-facing warning used when Blizzard credentials are missing.
+
+    Called from run() at startup, not during import. Importing this module with
+    empty credentials must stay safe so tests can load the package.
+    """
     print("⚠️  WARNING: Missing BLIZZARD_CLIENT_ID or BLIZZARD_CLIENT_SECRET in .env file!")
     print("   Please create a .env file in the same folder as this script with these two lines:")
     print("   BLIZZARD_CLIENT_ID=your_client_id_here")
@@ -21,7 +34,10 @@ def print_missing_credentials_warning():
     print("   (Get a new set from https://develop.battle.net if needed)")
 
 
-# SYSTEM_PROMPT is used on EVERY message so the bot always stays strictly WoW-only
+# SYSTEM_PROMPT is attached to EVERY model request. A language model is a
+# program that writes text from a prompt. This long instruction keeps the bot
+# in character and forbids it from inventing Warcraft lore when a tool finds
+# nothing. Do not edit the prompt string unless you intend to change behavior.
 SYSTEM_PROMPT = """
 CRITICAL RULE: If a tool returns "NO OFFICIAL DATA FOUND", you MUST respond with only: "I couldn't find official records for that in the Blizzard API. Would you like to ask about something else in Azeroth?" You are FORBIDDEN from adding any lore, story, or details from your own knowledge. No exceptions.
 
@@ -43,5 +59,7 @@ Only if the user clearly asks about something completely outside World of Warcra
 Always stay 100% in character as the Loremaster's Companion. All responses must relate to World of Warcraft lore, characters, items, quests, or adventures.
 """
 
-# Model name for the LLM (currently using Ollama with Llama 3.1 8B)
+# MODEL_NAME is the local Ollama model the OpenAI-compatible client will call.
+# Keeping it here makes the rest of the program read one setting instead of
+# scattering the string through the chat loop.
 MODEL_NAME = "llama3.1:8b"

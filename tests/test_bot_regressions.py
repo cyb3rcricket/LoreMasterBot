@@ -1,9 +1,14 @@
-"""Regression test suite for LoreMasterBot P0 bug fixes.
+"""P0 regression tests: bugs that already broke the chat loop.
 
-Covers:
-1. Short WoW prompts are not treated as casual conversation.
+A regression test proves an old failure cannot silently return. These
+tests do not talk to Ollama or Blizzard. monkeypatch temporarily replaces
+a function for one test. MagicMock is a fake object that records calls
+and can return canned values.
+
+This file covers:
+1. Short WoW names are not treated as casual conversation.
 2. Fallback tool calls receive valid IDs.
-3. Tool-call history is serializable and correctly linked.
+3. Tool-call history is JSON-serializable and correctly linked.
 4. Malformed tool arguments do not crash the turn.
 5. Missing Blizzard credentials fail cleanly when the app starts.
 """
@@ -25,7 +30,11 @@ from src.bot import ToolCall, is_conversational_prompt, parse_tool_calls, run
 
 @pytest.fixture(autouse=True)
 def reset_state_and_mock_environment(monkeypatch):
-    """Safety fixture to isolate tests, reset history, and prevent network calls."""
+    """Run around every test: clear history and block real network calls.
+
+    autouse=True means pytest applies this fixture without each test
+    asking for it. yield returns control to the test, then cleanup runs.
+    """
     src.bot.history.clear()
     monkeypatch.setattr("src.bot.ensure_valid_token", lambda: "mock_token")
     monkeypatch.setattr("src.bot.get_access_token", lambda: ("mock_token", 3600))
@@ -41,6 +50,8 @@ def reset_state_and_mock_environment(monkeypatch):
 # ============================================================================
 # 1. Short WoW prompts are not treated as casual conversation
 # ============================================================================
+# A past bug classified "Invincible" as chit-chat (tool_choice="none"), so
+# the model invented mount lore. The allowlist must stay exact-match only.
 
 SHORT_WOW_PROMPTS = ["Invincible", "Thunderfury", "Mr. Pinchy", "Karazhan"]
 CONVERSATIONAL_PHRASES = ["hi", "thank you", "thanks", "hello", "hey", "cool", "ok", "okay"]
@@ -100,6 +111,8 @@ def test_chat_loop_tool_choice_none_for_conversational_phrases(monkeypatch):
 # ============================================================================
 # 2. Fallback tool calls receive valid IDs
 # ============================================================================
+# Local models sometimes write tool JSON into message text. Those fake
+# calls still need call_<hex> ids so history can link results later.
 
 def test_fallback_tool_calls_receive_valid_uuid_ids():
     """Fallback JSON tool call in content must receive a valid call_<32 hex> id."""
@@ -151,6 +164,10 @@ def test_standard_tool_calls_not_overwritten_by_fallback():
 # ============================================================================
 # 3. Tool-call history is serializable and correctly linked
 # ============================================================================
+# JSON serialization means converting history to a text format the next
+# request can send. If history contains a ToolCall object instead of a
+# dict, json.dumps raises and the turn dies. tool_call_id must equal the
+# request id so the model can pair each result with the right call.
 
 def test_tool_call_history_serializable_and_correctly_linked(monkeypatch):
     """History appending must store plain dicts with matching tool_call_id and serialize cleanly."""
@@ -207,6 +224,8 @@ def test_tool_call_history_serializable_and_correctly_linked(monkeypatch):
 # ============================================================================
 # 4. Malformed tool arguments do not crash the turn
 # ============================================================================
+# Models send arguments as a JSON string, a dict, broken text, or None.
+# Every case must keep history as strings and still finish the turn.
 
 @pytest.mark.parametrize(
     "raw_args,is_valid,expected_handler_arg,expected_tool_result,expected_stored_args",
@@ -269,6 +288,9 @@ def test_tool_argument_variants_handling(raw_args, is_valid, expected_handler_ar
 # ============================================================================
 # 5. Missing Blizzard credentials fail cleanly
 # ============================================================================
+# Startup checks run in a subprocess (a brand-new Python process) so they
+# cannot see this test process's dummy keys. import src.bot must not exit.
+# python main.py / run() with empty keys must exit 1 and print the warning.
 
 def _run_main_without_credentials(env, cwd=None):
     return subprocess.run(

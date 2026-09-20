@@ -1,7 +1,21 @@
-# Tool schemas for OpenAI API tool calling.
+# Tool schemas sent to the language model.
+#
+# A schema is a description of a function: its name, what it is for, and
+# which arguments it accepts. The model reads this list and chooses a tool
+# instead of inventing Warcraft facts from training data.
+#
+# Descriptions are forceful because a small local model will skip tools
+# unless told it must call them first. "required" lists argument names that
+# must be present. Changing this wording changes model behavior.
 
 
 def _search_schema(name, description, search_term_description):
+    """Build one name-search tool schema.
+
+    The twelve search tools share this shape. The table below supplies the
+    unique name, description, and example so those strings are not copied
+    by hand twelve times. The wording itself must stay exactly as written.
+    """
     return {
         "type": "function",
         "function": {
@@ -18,6 +32,7 @@ def _search_schema(name, description, search_term_description):
     }
 
 
+# (tool name, model-facing description, search_term example text)
 _SEARCH_TOOL_SPECS = (
     (
         "search_creature",
@@ -81,6 +96,9 @@ _SEARCH_TOOL_SPECS = (
     ),
 )
 
+# lookup_item and get_wow_token_price stay handwritten: they do not take
+# search_term. Item-by-ID must stay a different tool from item-by-name so
+# the model cannot send "Thunderfury" to the numeric ID endpoint.
 TOOL_SCHEMAS = [
     _search_schema(*_SEARCH_TOOL_SPECS[0]),
     {
