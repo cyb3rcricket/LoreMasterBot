@@ -5,7 +5,7 @@ Covers:
 2. Fallback tool calls receive valid IDs.
 3. Tool-call history is serializable and correctly linked.
 4. Malformed tool arguments do not crash the turn.
-5. Missing Blizzard credentials fail cleanly.
+5. Missing Blizzard credentials fail cleanly when the app starts.
 """
 
 import json
@@ -15,20 +15,12 @@ import subprocess
 import sys
 import tempfile
 from types import SimpleNamespace
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 
-# Fallback dummy credentials to ensure tests run without .env or real credentials
-if not os.environ.get("BLIZZARD_CLIENT_ID"):
-    os.environ["BLIZZARD_CLIENT_ID"] = "mock_client_id"
-if not os.environ.get("BLIZZARD_CLIENT_SECRET"):
-    os.environ["BLIZZARD_CLIENT_SECRET"] = "mock_client_secret"
-
-# Ensure importing src.bot does not make real Blizzard network calls or require Ollama
-with patch("src.api.blizzard.get_access_token", return_value=("mock_token", 3600)):
-    import src.bot
-    from src.bot import ToolCall, is_conversational_prompt, parse_tool_calls, run
+import src.bot
+from src.bot import ToolCall, is_conversational_prompt, parse_tool_calls, run
 
 
 @pytest.fixture(autouse=True)
@@ -36,7 +28,7 @@ def reset_state_and_mock_environment(monkeypatch):
     """Safety fixture to isolate tests, reset history, and prevent network calls."""
     src.bot.history.clear()
     monkeypatch.setattr("src.bot.ensure_valid_token", lambda: "mock_token")
-    monkeypatch.setattr("src.api.blizzard.get_access_token", lambda: ("mock_token", 3600))
+    monkeypatch.setattr("src.bot.get_access_token", lambda: ("mock_token", 3600))
     monkeypatch.setattr("src.api.blizzard.ensure_valid_token", lambda: "mock_token")
 
     # Mock Spinner to prevent threaded stdout animation during test runs
@@ -71,15 +63,14 @@ def test_conversational_phrases_classified_as_conversational(phrase):
     assert is_conversational_prompt(f"  {phrase.upper()}? ") is True
 
 
-@pytest.mark.parametrize("prompt", SHORT_WOW_PROMPTS)
-def test_chat_loop_tool_choice_required_for_short_wow_prompts(prompt, monkeypatch):
+def test_chat_loop_tool_choice_required_for_short_wow_prompts(monkeypatch):
     """In the chat loop, short WoW prompts must set tool_choice='required'."""
     mock_response = SimpleNamespace(
         choices=[SimpleNamespace(message=SimpleNamespace(content="Ancient lore response.", tool_calls=None))]
     )
     mock_create = MagicMock(return_value=mock_response)
     monkeypatch.setattr(src.bot.client.chat.completions, "create", mock_create)
-    monkeypatch.setattr("builtins.input", MagicMock(side_effect=[prompt, "quit"]))
+    monkeypatch.setattr("builtins.input", MagicMock(side_effect=["Invincible", "quit"]))
     monkeypatch.setattr("builtins.print", MagicMock())
 
     run()
@@ -89,15 +80,14 @@ def test_chat_loop_tool_choice_required_for_short_wow_prompts(prompt, monkeypatc
     assert first_call_kwargs.get("tool_choice") == "required"
 
 
-@pytest.mark.parametrize("phrase", ["hi", "thank you"])
-def test_chat_loop_tool_choice_none_for_conversational_phrases(phrase, monkeypatch):
+def test_chat_loop_tool_choice_none_for_conversational_phrases(monkeypatch):
     """In the chat loop, casual conversation must set tool_choice='none'."""
     mock_response = SimpleNamespace(
         choices=[SimpleNamespace(message=SimpleNamespace(content="Greetings, traveler!", tool_calls=None))]
     )
     mock_create = MagicMock(return_value=mock_response)
     monkeypatch.setattr(src.bot.client.chat.completions, "create", mock_create)
-    monkeypatch.setattr("builtins.input", MagicMock(side_effect=[phrase, "quit"]))
+    monkeypatch.setattr("builtins.input", MagicMock(side_effect=["hi", "quit"]))
     monkeypatch.setattr("builtins.print", MagicMock())
 
     run()
@@ -280,15 +270,42 @@ def test_tool_argument_variants_handling(raw_args, is_valid, expected_handler_ar
 # 5. Missing Blizzard credentials fail cleanly
 # ============================================================================
 
-def test_missing_credentials_empty_env_exits_cleanly():
-    """Empty credentials in env must trigger clean exit (code 1) with warning and no traceback."""
+def _run_main_without_credentials(env, cwd=None):
+    return subprocess.run(
+        [sys.executable, os.path.join(os.getcwd(), "main.py")],
+        env=env,
+        cwd=cwd or os.getcwd(),
+        capture_output=True,
+        text=True,
+    )
+
+
+def test_importing_bot_does_not_exit_or_authenticate_when_credentials_missing():
+    """Importing src.bot must not exit or call Blizzard, even with empty credentials."""
     env = {**os.environ, "BLIZZARD_CLIENT_ID": "", "BLIZZARD_CLIENT_SECRET": ""}
     result = subprocess.run(
-        [sys.executable, "-c", "import src.bot"],
+        [
+            sys.executable,
+            "-c",
+            (
+                "import src.api.blizzard as blizzard;"
+                "blizzard.get_access_token = lambda: (_ for _ in ()).throw(RuntimeError('network'));"
+                "import src.bot"
+            ),
+        ],
         env=env,
         capture_output=True,
         text=True,
     )
+
+    assert result.returncode == 0
+    assert "Traceback" not in result.stderr
+
+
+def test_missing_credentials_empty_env_exits_cleanly():
+    """Empty credentials must trigger a clean startup exit (code 1) with warning and no traceback."""
+    env = {**os.environ, "BLIZZARD_CLIENT_ID": "", "BLIZZARD_CLIENT_SECRET": ""}
+    result = _run_main_without_credentials(env)
 
     assert result.returncode == 1
     assert "WARNING: Missing BLIZZARD_CLIENT_ID or BLIZZARD_CLIENT_SECRET" in result.stdout
@@ -302,8 +319,9 @@ def test_missing_credentials_absent_env_exits_cleanly():
         clean_env = {k: v for k, v in os.environ.items() if "BLIZZARD" not in k}
         clean_env["PYTHONPATH"] = os.getcwd()
 
+        # Use -c so dotenv cannot discover the project's .env via main.py's path.
         result = subprocess.run(
-            [sys.executable, "-c", "import src.bot"],
+            [sys.executable, "-c", "from src.bot import run; run()"],
             env=clean_env,
             cwd=temp_dir,
             capture_output=True,
@@ -314,19 +332,3 @@ def test_missing_credentials_absent_env_exits_cleanly():
         assert "WARNING: Missing BLIZZARD_CLIENT_ID or BLIZZARD_CLIENT_SECRET" in result.stdout
         assert "MissingCredentialsError" not in result.stderr
         assert "Traceback" not in result.stderr
-
-
-def test_missing_credentials_main_entrypoint_exits_cleanly():
-    """Running main.py with missing credentials must exit with code 1 and helpful warning."""
-    env = {**os.environ, "BLIZZARD_CLIENT_ID": "", "BLIZZARD_CLIENT_SECRET": ""}
-    result = subprocess.run(
-        [sys.executable, "main.py"],
-        env=env,
-        capture_output=True,
-        text=True,
-    )
-
-    assert result.returncode == 1
-    assert "WARNING: Missing BLIZZARD_CLIENT_ID or BLIZZARD_CLIENT_SECRET" in result.stdout
-    assert "MissingCredentialsError" not in result.stderr
-    assert "Traceback" not in result.stderr

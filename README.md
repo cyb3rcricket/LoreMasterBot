@@ -32,6 +32,7 @@ The project is organized into a clean, modular structure for maintainability:
 LoreMasterBot/
 ├── main.py                 # Entry point
 ├── requirements.txt        # Python dependencies
+├── requirements-dev.txt    # Test dependencies
 ├── .env.example            # Example environment file
 ├── README.md               # This file
 └── src/                    # Main source code
@@ -53,6 +54,12 @@ LoreMasterBot/
 
 ```bash
 python -m pip install -r requirements.txt
+```
+
+For local development and tests, also install:
+
+```bash
+python -m pip install -r requirements-dev.txt
 ```
 
 3. Install and start Ollama (if not already running):
@@ -100,6 +107,12 @@ Examples:
 - "What is the current WoW Token price?"
 
 Type `quit` to exit.
+
+## Run tests
+
+```bash
+python -m pytest -q
+```
 
 ## Security Note
 - Keep Blizzard credentials in `.env`.

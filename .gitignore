@@ -7,3 +7,11 @@ __pycache__/
 *.pyc
 *.pyo
 *.pyd
+
+# Ignore local OS and test artifacts
+.DS_Store
+.pytest_cache/
+.coverage
+htmlcov/
+.mypy_cache/
+*.egg-info/
