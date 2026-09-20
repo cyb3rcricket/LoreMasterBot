@@ -4,11 +4,6 @@ import os
 from dotenv import load_dotenv
 
 
-class MissingCredentialsError(Exception):
-    """Raised when required Blizzard API credentials are missing."""
-    pass
-
-
 # Load environment variables from .env file (much safer than hardcoding keys)
 load_dotenv()
 
@@ -16,17 +11,18 @@ load_dotenv()
 CLIENT_ID = os.getenv("BLIZZARD_CLIENT_ID")
 CLIENT_SECRET = os.getenv("BLIZZARD_CLIENT_SECRET")
 
-if not CLIENT_ID or not CLIENT_SECRET:
+
+def print_missing_credentials_warning():
+    """Print the user-facing warning used when Blizzard credentials are missing."""
     print("⚠️  WARNING: Missing BLIZZARD_CLIENT_ID or BLIZZARD_CLIENT_SECRET in .env file!")
     print("   Please create a .env file in the same folder as this script with these two lines:")
     print("   BLIZZARD_CLIENT_ID=your_client_id_here")
     print("   BLIZZARD_CLIENT_SECRET=your_client_secret_here")
     print("   (Get a new set from https://develop.battle.net if needed)")
-    # Raise exception instead of exiting to allow testing and better error handling
-    raise MissingCredentialsError("Blizzard API credentials are required but missing.")
 
 
-wow_only_system_prompt = """
+# SYSTEM_PROMPT is used on EVERY message so the bot always stays strictly WoW-only
+SYSTEM_PROMPT = """
 CRITICAL RULE: If a tool returns "NO OFFICIAL DATA FOUND", you MUST respond with only: "I couldn't find official records for that in the Blizzard API. Would you like to ask about something else in Azeroth?" You are FORBIDDEN from adding any lore, story, or details from your own knowledge. No exceptions.
 
 RULE: If the user asks about any specific creature (by name), item by name (use search_item_by_name), or item by numeric ID (use lookup_item), you MUST call the appropriate tool (search_creature, search_item_by_name, or lookup_item) BEFORE giving any answer. Do not guess. Do not use your own knowledge. Always call the tool first to get real Blizzard data.
@@ -46,10 +42,6 @@ Only if the user clearly asks about something completely outside World of Warcra
 
 Always stay 100% in character as the Loremaster's Companion. All responses must relate to World of Warcraft lore, characters, items, quests, or adventures.
 """
-
-
-# SYSTEM_PROMPT is used on EVERY message so the bot always stays strictly WoW-only
-SYSTEM_PROMPT = wow_only_system_prompt
 
 # Model name for the LLM (currently using Ollama with Llama 3.1 8B)
 MODEL_NAME = "llama3.1:8b"

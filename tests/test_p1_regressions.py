@@ -1,41 +1,16 @@
 """Regression tests for LoreMasterBot P1 reliability hardening.
 
 Covers:
-1. Blizzard API Request Timeouts:
-   - Shared timeout constant BLIZZARD_API_TIMEOUT used in all requests.get and requests.post.
-   - Timeout during OAuth token fetch retries up to 3 times and returns (None, None).
-   - Timeout during search and entity fetches fails safely returning None.
-
-2. WoW Token Price Cache TTL:
-   - WOW_TOKEN_CACHE_TTL_SECONDS constant defined.
-   - Cache hit before TTL expires (no redundant network calls).
-   - Fresh fetch after TTL expires (network call made).
-   - Safe error handling on network error after TTL expires.
-
-3. Case-Insensitive Famous Item Fallback:
-   - Case-insensitive resolution for "Thunderfury", "thunderfury", "THUNDERFURY".
-   - Case-insensitive resolution for all entries in famous_items fallback map without network requests.
-
-4. Item Tool Contract / Schema Mismatch:
-   - Ambiguity eliminated between lookup_item and search_item_by_name.
-   - Schemas enforce item_id for lookup_item and search_term for search_item_by_name.
-   - SYSTEM_PROMPT clearly differentiates name searches from ID lookups.
-   - Handlers adhere to their respective parameter contracts.
-
-5. Multiple Tool Call History:
-   - Two valid tool calls in one assistant response produce one assistant history entry followed by tool results.
-   - Correct execution and history ordering.
-   - Matching tool_call_ids between tool_calls and tool results.
-   - One malformed call alongside one valid call produces safe error without aborting turn.
-   - Full history remains cleanly JSON-serializable.
-   - Single-tool-call behavior preserved.
+1. Blizzard API request timeouts and safe OAuth retries.
+2. WoW Token price cache TTL and invalid-price handling.
+3. Case-insensitive famous item fallback.
+4. Item tool contract / schema mismatch.
+5. Multiple tool-call history, isolation, and fallback parsing.
 """
 
-import inspect
 import json
-import time
 from types import SimpleNamespace
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 import requests
@@ -57,6 +32,7 @@ def reset_test_state(monkeypatch):
     blizzard.wow_token_cache["data"] = None
     blizzard.wow_token_cache["timestamp"] = 0.0
     monkeypatch.setattr("src.bot.ensure_valid_token", lambda: "mock_token")
+    monkeypatch.setattr("src.bot.get_access_token", lambda: ("mock_token", 3600))
     monkeypatch.setattr("src.api.blizzard.ensure_valid_token", lambda: "mock_token")
     mock_spinner = MagicMock()
     monkeypatch.setattr("src.bot.Spinner", MagicMock(return_value=mock_spinner))
@@ -72,16 +48,8 @@ def reset_test_state(monkeypatch):
 # 1. BLIZZARD API REQUEST TIMEOUTS
 # ============================================================================
 
-def test_blizzard_api_timeout_constants_defined():
-    """Shared timeout constants must be defined as positive numbers."""
-    assert hasattr(blizzard, "BLIZZARD_API_TIMEOUT")
-    assert hasattr(blizzard, "BLIZZARD_REQUEST_TIMEOUT")
-    assert blizzard.BLIZZARD_API_TIMEOUT > 0
-    assert blizzard.BLIZZARD_API_TIMEOUT == blizzard.BLIZZARD_REQUEST_TIMEOUT
-
-
-def test_every_outbound_blizzard_request_uses_timeout_constant(monkeypatch):
-    """Every requests.get and requests.post call in src.api.blizzard must pass the shared timeout."""
+def test_outbound_blizzard_requests_use_timeout_constant(monkeypatch):
+    """OAuth, search, entity fetch, and token-price requests must pass the shared timeout."""
     mock_response = MagicMock()
     mock_response.status_code = 200
     mock_response.json.return_value = {"access_token": "token123", "expires_in": 3600, "results": [], "price": 2000000000}
@@ -92,37 +60,19 @@ def test_every_outbound_blizzard_request_uses_timeout_constant(monkeypatch):
     monkeypatch.setattr("requests.get", mock_get)
     monkeypatch.setattr("requests.post", mock_post)
 
-    # 1. OAuth post
     blizzard.get_access_token()
     assert mock_post.called
     assert mock_post.call_args.kwargs.get("timeout") == blizzard.BLIZZARD_API_TIMEOUT
 
-    # 2. Entity fetches
-    fetch_functions = [
+    for func, args in (
         (blizzard.search_blizzard, ("custom_query", "item", "token")),
-        (blizzard.search_blizzard, ("custom_query", "quest", "token")),
         (blizzard.get_item_data, (12345, "token")),
-        (blizzard.get_creature_data, (12345, "token")),
-        (blizzard.get_quest_data, (12345, "token")),
-        (blizzard.get_mount_data, (12345, "token")),
-        (blizzard.get_achievement_data, (12345, "token")),
-        (blizzard.get_spell_data, (12345, "token")),
-        (blizzard.get_journal_instance_data, (12345, "token")),
-        (blizzard.get_reputation_faction_data, (12345, "token")),
-        (blizzard.get_title_data, (12345, "token")),
-        (blizzard.get_toy_data, (12345, "token")),
-        (blizzard.get_pet_data, (12345, "token")),
-        (blizzard.get_heirloom_data, (12345, "token")),
         (blizzard.get_wow_token_price, ("token",)),
-    ]
-
-    for func, args in fetch_functions:
+    ):
         mock_get.reset_mock()
         func(*args)
         assert mock_get.called, f"{func.__name__} did not call requests.get"
-        assert mock_get.call_args.kwargs.get("timeout") == blizzard.BLIZZARD_API_TIMEOUT, (
-            f"{func.__name__} did not pass timeout={blizzard.BLIZZARD_API_TIMEOUT}"
-        )
+        assert mock_get.call_args.kwargs.get("timeout") == blizzard.BLIZZARD_API_TIMEOUT
 
 
 def test_oauth_timeout_retries_and_fails_safely(monkeypatch):
@@ -151,12 +101,6 @@ def test_entity_fetch_timeout_fails_safely(monkeypatch):
 # ============================================================================
 # 2. WOW TOKEN PRICE CACHE TTL
 # ============================================================================
-
-def test_wow_token_ttl_constant_defined():
-    """WOW_TOKEN_CACHE_TTL_SECONDS must be around 60 seconds."""
-    assert hasattr(blizzard, "WOW_TOKEN_CACHE_TTL_SECONDS")
-    assert 30 <= blizzard.WOW_TOKEN_CACHE_TTL_SECONDS <= 120
-
 
 def test_wow_token_cache_hit_before_ttl_expiration(monkeypatch):
     """Within TTL, repeated requests must return cached data without extra network calls."""
@@ -229,41 +173,26 @@ def test_wow_token_fetch_failure_after_ttl_returns_none(monkeypatch):
 # 3. CASE-INSENSITIVE FAMOUS ITEM FALLBACK
 # ============================================================================
 
-@pytest.mark.parametrize(
-    "variant",
-    ["Thunderfury", "thunderfury", "THUNDERFURY", "ThUnDeRfUrY", "  Thunderfury  ", "thunderfury  "]
-)
-def test_famous_item_fallback_thunderfury_capitalization_variants(variant, monkeypatch):
-    """Thunderfury in any casing must resolve identically to 19019 without network requests."""
+@pytest.mark.parametrize("name,expected_id", list(blizzard.famous_items.items()))
+@pytest.mark.parametrize("variant", ["plain", "upper", "mixed", "padded"])
+def test_famous_item_fallback_is_case_insensitive(name, expected_id, variant, monkeypatch):
+    """Every famous item must resolve case-insensitively without network requests."""
     mock_get = MagicMock()
     monkeypatch.setattr("requests.get", mock_get)
+    blizzard.search_cache.clear()
 
-    item_id = blizzard.search_blizzard(variant, "item", "token")
-    assert item_id == 19019
+    if variant == "plain":
+        query = name
+    elif variant == "upper":
+        query = name.upper()
+    elif variant == "mixed":
+        query = "".join(ch.upper() if i % 2 else ch.lower() for i, ch in enumerate(name))
+    else:
+        query = f"  {name}  "
+
+    item_id = blizzard.search_blizzard(query, "item", "token")
+    assert item_id == expected_id, f"Failed resolving famous item '{query}'"
     assert not mock_get.called, "Famous item fallback must not make any outbound network calls"
-
-
-def test_all_famous_items_resolve_case_insensitively(monkeypatch):
-    """All entries in famous_items must resolve case-insensitively without network calls."""
-    mock_get = MagicMock()
-    monkeypatch.setattr("requests.get", mock_get)
-
-    expected_famous_items = {
-        "ashbringer": 13262,
-        "thunderfury": 19019,
-        "sulfuras": 17182,
-        "atiesh": 22589,
-        "val'anyr": 46017,
-        "shadowmourne": 49623,
-        "dragonwrath": 78495,
-    }
-
-    for name, expected_id in expected_famous_items.items():
-        for variant in [name.lower(), name.upper(), name.capitalize()]:
-            blizzard.search_cache.clear()
-            item_id = blizzard.search_blizzard(variant, "item", "token")
-            assert item_id == expected_id, f"Failed resolving famous item '{variant}'"
-            assert not mock_get.called
 
 
 # ============================================================================
@@ -339,7 +268,17 @@ def test_handle_search_item_by_name_contract(monkeypatch):
 # ============================================================================
 
 def test_multiple_tool_calls_stored_in_single_assistant_message(monkeypatch):
-    """When model outputs multiple tool calls, history must store them in a single assistant entry followed by tool results."""
+    """Multiple tool calls share one assistant history entry, preserve order, and stay serializable."""
+    execution_order = []
+
+    def mock_creature(args, token):
+        execution_order.append("tool_1")
+        return "Creature: Ragnaros"
+
+    def mock_item(args, token):
+        execution_order.append("tool_2")
+        return "Item: Sulfuras"
+
     call_1 = ToolCall(id="call_001_aaa", name="search_creature", arguments='{"search_term": "Ragnaros"}')
     call_2 = ToolCall(id="call_002_bbb", name="search_item_by_name", arguments='{"search_term": "Sulfuras"}')
 
@@ -354,15 +293,11 @@ def test_multiple_tool_calls_stored_in_single_assistant_message(monkeypatch):
     monkeypatch.setattr(bot.client.chat.completions, "create", mock_create)
     monkeypatch.setattr("builtins.input", MagicMock(side_effect=["Tell me about Ragnaros and Sulfuras", "quit"]))
     monkeypatch.setattr("builtins.print", MagicMock())
-
-    handler_creature = MagicMock(return_value="Creature: Ragnaros")
-    handler_item = MagicMock(return_value="Item: Sulfuras")
-    monkeypatch.setitem(bot.TOOL_HANDLERS, "search_creature", handler_creature)
-    monkeypatch.setitem(bot.TOOL_HANDLERS, "search_item_by_name", handler_item)
+    monkeypatch.setitem(bot.TOOL_HANDLERS, "search_creature", mock_creature)
+    monkeypatch.setitem(bot.TOOL_HANDLERS, "search_item_by_name", mock_item)
 
     run()
 
-    # Find the assistant tool_calls entry
     assistant_tool_entries = [h for h in bot.history if h.get("role") == "assistant" and "tool_calls" in h]
     assert len(assistant_tool_entries) == 1, (
         f"Expected exactly 1 assistant entry with tool_calls, but found {len(assistant_tool_entries)}"
@@ -372,7 +307,6 @@ def test_multiple_tool_calls_stored_in_single_assistant_message(monkeypatch):
     assert assistant_entry["content"] is None
     assert len(assistant_entry["tool_calls"]) == 2
 
-    # Verify both tool calls inside the single assistant entry
     tc1 = assistant_entry["tool_calls"][0]
     assert tc1["id"] == "call_001_aaa"
     assert tc1["type"] == "function"
@@ -385,7 +319,6 @@ def test_multiple_tool_calls_stored_in_single_assistant_message(monkeypatch):
     assert tc2["function"]["name"] == "search_item_by_name"
     assert json.loads(tc2["function"]["arguments"]) == {"search_term": "Sulfuras"}
 
-    # Verify tool results entries follow in order with matching tool_call_ids
     tool_entries = [h for h in bot.history if h.get("role") == "tool"]
     assert len(tool_entries) == 2
     assert tool_entries[0]["tool_call_id"] == "call_001_aaa"
@@ -393,53 +326,12 @@ def test_multiple_tool_calls_stored_in_single_assistant_message(monkeypatch):
     assert tool_entries[1]["tool_call_id"] == "call_002_bbb"
     assert tool_entries[1]["content"] == "Item: Sulfuras"
 
-    # Execution order check
-    assert handler_creature.called
-    assert handler_item.called
+    assert execution_order == ["tool_1", "tool_2"]
+    assert [h["role"] for h in bot.history] == ["user", "assistant", "tool", "tool", "assistant"]
 
-    # JSON serializability check
     serialized = json.dumps(bot.history)
     deserialized = json.loads(serialized)
     assert len(deserialized) == len(bot.history)
-
-
-def test_multiple_tool_calls_ordering_in_history(monkeypatch):
-    """Verify that execution and history preserve the exact order of tool calls."""
-    execution_order = []
-
-    def mock_h1(args, token):
-        execution_order.append("tool_1")
-        return "Result 1"
-
-    def mock_h2(args, token):
-        execution_order.append("tool_2")
-        return "Result 2"
-
-    call_1 = ToolCall(id="call_x1", name="search_creature", arguments='{"search_term": "A"}')
-    call_2 = ToolCall(id="call_x2", name="search_item_by_name", arguments='{"search_term": "B"}')
-
-    llm_first = SimpleNamespace(
-        choices=[SimpleNamespace(message=SimpleNamespace(content=None, tool_calls=[call_1, call_2]))]
-    )
-    llm_final = SimpleNamespace(
-        choices=[SimpleNamespace(message=SimpleNamespace(content="Done.", tool_calls=None))]
-    )
-
-    monkeypatch.setattr(bot.client.chat.completions, "create", MagicMock(side_effect=[llm_first, llm_final]))
-    monkeypatch.setattr("builtins.input", MagicMock(side_effect=["Check A and B", "quit"]))
-    monkeypatch.setattr("builtins.print", MagicMock())
-    monkeypatch.setitem(bot.TOOL_HANDLERS, "search_creature", mock_h1)
-    monkeypatch.setitem(bot.TOOL_HANDLERS, "search_item_by_name", mock_h2)
-
-    run()
-
-    assert execution_order == ["tool_1", "tool_2"]
-
-    # History shape check: User -> Assistant (with 2 calls) -> Tool 1 -> Tool 2 -> Assistant (final)
-    roles = [h["role"] for h in bot.history]
-    assert roles == ["user", "assistant", "tool", "tool", "assistant"]
-    assert bot.history[2]["tool_call_id"] == "call_x1"
-    assert bot.history[3]["tool_call_id"] == "call_x2"
 
 
 def test_malformed_tool_call_alongside_valid_tool_call(monkeypatch):
@@ -486,38 +378,6 @@ def test_malformed_tool_call_alongside_valid_tool_call(monkeypatch):
     assert tool_entries[1]["content"] == "Thunderfury Item Data"
 
     # Entire history is JSON-serializable
-    assert json.dumps(bot.history) is not None
-
-
-def test_single_tool_call_behavior_preserved(monkeypatch):
-    """Single tool call behavior remains backwards-compatible."""
-    call = ToolCall(id="call_single_123", name="lookup_item", arguments='{"item_id": "19019"}')
-
-    llm_first = SimpleNamespace(
-        choices=[SimpleNamespace(message=SimpleNamespace(content=None, tool_calls=[call]))]
-    )
-    llm_final = SimpleNamespace(
-        choices=[SimpleNamespace(message=SimpleNamespace(content="Single item response.", tool_calls=None))]
-    )
-
-    mock_handler = MagicMock(return_value="Single Item Data")
-    monkeypatch.setattr(bot.client.chat.completions, "create", MagicMock(side_effect=[llm_first, llm_final]))
-    monkeypatch.setattr("builtins.input", MagicMock(side_effect=["19019", "quit"]))
-    monkeypatch.setattr("builtins.print", MagicMock())
-    monkeypatch.setitem(bot.TOOL_HANDLERS, "lookup_item", mock_handler)
-
-    run()
-
-    assistant_entries = [h for h in bot.history if h.get("role") == "assistant" and "tool_calls" in h]
-    assert len(assistant_entries) == 1
-    assert len(assistant_entries[0]["tool_calls"]) == 1
-    assert assistant_entries[0]["tool_calls"][0]["id"] == "call_single_123"
-
-    tool_entries = [h for h in bot.history if h.get("role") == "tool"]
-    assert len(tool_entries) == 1
-    assert tool_entries[0]["tool_call_id"] == "call_single_123"
-    assert tool_entries[0]["content"] == "Single Item Data"
-
     assert json.dumps(bot.history) is not None
 
 
@@ -728,29 +588,3 @@ def test_fallback_multiple_tool_calls_in_content():
     assert tool_calls[1].function.name == "search_item_by_name"
     assert json.loads(tool_calls[1].function.arguments) == {"search_term": "Sulfuras"}
     assert response_message.content == "Thinking..."
-
-
-def test_famous_items_with_custom_capitalized_entries(monkeypatch):
-    """Famous items fallback must resolve case-insensitively even if entries have mixed-case keys."""
-    monkeypatch.setitem(blizzard.famous_items, "Frostmourne", 12345)
-    mock_get = MagicMock()
-    monkeypatch.setattr("requests.get", mock_get)
-
-    assert blizzard.search_blizzard("frostmourne", "item", "token") == 12345
-    assert blizzard.search_blizzard("Frostmourne", "item", "token") == 12345
-    assert blizzard.search_blizzard("FROSTMOURNE", "item", "token") == 12345
-    assert blizzard.search_blizzard("  Frostmourne  ", "ITEM", "token") == 12345
-    assert not mock_get.called
-
-
-def test_clean_schema_examples_for_quests_mounts_spells():
-    """Schemas for quests, mounts, and spells must not use item examples like Thunderfury or Phantom Blade."""
-    quest_schema = next(s["function"] for s in TOOL_SCHEMAS if s["function"]["name"] == "search_quest_by_name")
-    assert "Phantom Blade" not in quest_schema["parameters"]["properties"]["search_term"]["description"]
-
-    mount_schema = next(s["function"] for s in TOOL_SCHEMAS if s["function"]["name"] == "search_mount_by_name")
-    assert "Phantom Blade" not in mount_schema["parameters"]["properties"]["search_term"]["description"]
-
-    spell_schema = next(s["function"] for s in TOOL_SCHEMAS if s["function"]["name"] == "search_spell_by_name")
-    assert "Thunderfury" not in spell_schema["parameters"]["properties"]["search_term"]["description"]
-

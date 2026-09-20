@@ -7,6 +7,19 @@ import threading
 import itertools
 import sys
 import uuid
+from types import SimpleNamespace
+
+from src.config import (
+    SYSTEM_PROMPT,
+    MODEL_NAME,
+    CLIENT_ID,
+    CLIENT_SECRET,
+    print_missing_credentials_warning,
+)
+from src.api import blizzard as blizzard_api
+from src.api.blizzard import ensure_valid_token, get_access_token
+from src.tools.handlers import TOOL_HANDLERS
+from src.tools.schemas import TOOL_SCHEMAS
 
 CONVERSATIONAL_PHRASES = (
     "thanks", "thank you", "ok", "okay", "cool", "got it",
@@ -15,38 +28,13 @@ CONVERSATIONAL_PHRASES = (
     "that's helpful", "interesting", "wow"
 )
 
-from types import SimpleNamespace
-
-try:
-    from src.config import SYSTEM_PROMPT, MODEL_NAME, MissingCredentialsError
-except Exception as e:
-    if type(e).__name__ == "MissingCredentialsError":
-        sys.exit(1)
-    raise
-
-from src.api import blizzard as blizzard_api
-from src.api.blizzard import ensure_valid_token, get_access_token
-from src.tools.handlers import TOOL_HANDLERS
-from src.tools.schemas import TOOL_SCHEMAS
-
-
-# --- Get Blizzard access token once when the script starts ---
-print("Authenticating with Blizzard...")
-token, expires_in = get_access_token()
-if token:
-    blizzard_api.blizzard_token = token
-    blizzard_api.token_expiry = time.time() + expires_in
-    print("Authentication successful!")
-else:
-    print("Could not authenticate with Blizzard. API lookups will be unavailable.")
-
 # --- Ollama Client Setup ---
 client = OpenAI(
     base_url="http://localhost:11434/v1",
     api_key="ollama",
 )
 
-# Simple conversation memory - keeps the last 8 turns so the bot remembers context
+# Simple conversation memory - keeps the last 7 turns so the bot remembers context
 history = []
 
 
@@ -154,8 +142,49 @@ def is_conversational_prompt(user_prompt):
     return user_text in CONVERSATIONAL_PHRASES
 
 
+def _normalize_tool_arguments(raw_arguments):
+    """
+    Normalize tool-call arguments for execution and history storage.
+    Returns (function_args_or_None, stored_arguments_string).
+    History storage is always a JSON/text string.
+    """
+    if isinstance(raw_arguments, dict):
+        return raw_arguments, json.dumps(raw_arguments)
+    if isinstance(raw_arguments, str):
+        stored_arguments = raw_arguments
+        try:
+            function_args = json.loads(raw_arguments)
+            if not isinstance(function_args, dict):
+                return None, stored_arguments
+            return function_args, stored_arguments
+        except (json.JSONDecodeError, TypeError):
+            return None, stored_arguments
+    try:
+        stored_arguments = json.dumps(raw_arguments)
+    except (TypeError, ValueError):
+        stored_arguments = "null"
+    return None, stored_arguments
+
+
+def _authenticate_blizzard():
+    print("Authenticating with Blizzard...")
+    token, expires_in = get_access_token()
+    if token:
+        blizzard_api.blizzard_token = token
+        blizzard_api.token_expiry = time.time() + expires_in
+        print("Authentication successful!")
+    else:
+        print("Could not authenticate with Blizzard. API lookups will be unavailable.")
+
+
 def run():
     global history
+
+    if not CLIENT_ID or not CLIENT_SECRET:
+        print_missing_credentials_warning()
+        sys.exit(1)
+
+    _authenticate_blizzard()
 
     # --- Updated Welcome Message ---
     print("\n🤖 Hello! I'm your Loremaster's Companion. (Type 'quit' to exit)")
@@ -209,23 +238,7 @@ def run():
 
                 for tool_call in tool_calls:
                     function_name = tool_call.function.name
-                    if isinstance(tool_call.function.arguments, dict):
-                        function_args = tool_call.function.arguments
-                        stored_arguments = json.dumps(tool_call.function.arguments)
-                    elif isinstance(tool_call.function.arguments, str):
-                        stored_arguments = tool_call.function.arguments
-                        try:
-                            function_args = json.loads(tool_call.function.arguments)
-                            if not isinstance(function_args, dict):
-                                function_args = None
-                        except (json.JSONDecodeError, TypeError):
-                            function_args = None
-                    else:
-                        try:
-                            stored_arguments = json.dumps(tool_call.function.arguments)
-                        except (TypeError, ValueError):
-                            stored_arguments = "null"
-                        function_args = None
+                    function_args, stored_arguments = _normalize_tool_arguments(tool_call.function.arguments)
 
                     call_id = tool_call.id if getattr(tool_call, "id", None) else f"call_{uuid.uuid4().hex}"
                     assistant_tool_calls.append({
