@@ -22,11 +22,14 @@ from types import SimpleNamespace
 
 from src.config import (
     SYSTEM_PROMPT,
-    MODEL_NAME,
+    LLM_MODEL,
     CLIENT_ID,
     CLIENT_SECRET,
     print_missing_credentials_warning,
+    validate_llm_provider,
+    llm_provider_label,
 )
+from src import config as app_config
 from src.api import blizzard as blizzard_api
 from src.api.blizzard import ensure_valid_token, get_access_token
 from src.tools.handlers import TOOL_HANDLERS
@@ -42,14 +45,39 @@ CONVERSATIONAL_PHRASES = (
     "that's helpful", "interesting", "wow"
 )
 
-# The openai library speaks the OpenAI Chat Completions format. Ollama is a
-# program that runs models on this computer and exposes the same format at
-# localhost:11434. We are not calling OpenAI's paid cloud API. The api_key
-# value is a required dummy; Ollama ignores it.
-client = OpenAI(
-    base_url="http://localhost:11434/v1",
-    api_key="ollama",
-)
+def create_llm_client():
+    """Build the one OpenAI client used by the chat loop.
+
+    A provider is the service that runs the language model (Ollama, Gemini,
+    or a custom host). Many of those services accept the same Chat Completions
+    request format, so this helper only changes the URL and API key. The chat
+    loop below stays the same for every provider.
+
+    API keys stay in environment variables (loaded by src.config) so they are
+    not written into source files. A dummy key is used only when a required
+    key is missing, because the OpenAI constructor refuses an empty string.
+    Startup validation still exits before chat if the active provider is
+    incomplete.
+    """
+    if app_config.LLM_PROVIDER == "gemini":
+        return OpenAI(
+            base_url=app_config.GEMINI_OPENAI_BASE_URL,
+            api_key=app_config.GEMINI_API_KEY or "missing",
+        )
+    if app_config.LLM_PROVIDER == "custom":
+        return OpenAI(
+            base_url=app_config.LLM_BASE_URL or app_config.DEFAULT_OLLAMA_BASE_URL,
+            api_key=app_config.LLM_API_KEY or "missing",
+        )
+    return OpenAI(
+        base_url=app_config.LLM_BASE_URL or app_config.DEFAULT_OLLAMA_BASE_URL,
+        api_key=app_config.OLLAMA_API_KEY,
+    )
+
+
+# Built at import so existing tests can patch client.chat.completions.create.
+# Import does not contact Ollama, Gemini, or Blizzard.
+client = create_llm_client()
 
 # Conversation history is a list of message dictionaries sent back to the
 # model on later turns. Each item has a role such as "user", "assistant", or
@@ -233,6 +261,71 @@ def _normalize_tool_arguments(raw_arguments):
     return None, stored_arguments
 
 
+def _structured_tool_call_extras(tool_call):
+    """Copy extra fields from a real provider tool call.
+
+    Some OpenAI-compatible APIs attach extra data to a tool call besides
+    id, type, and function. Gemini 3, for example, may send
+    extra_content.google.thought_signature. That signature must be sent
+    back unchanged with the assistant tool call, or the next request can
+    fail.
+
+    Fallback ToolCall objects are built by LoreMasterBot's text parser.
+    They are not provider objects, so they get no invented extra fields.
+    """
+    if isinstance(tool_call, ToolCall):
+        return {}
+
+    payload = None
+    dump = getattr(tool_call, "model_dump", None)
+    if callable(dump):
+        try:
+            payload = dump(mode="json")
+        except TypeError:
+            payload = dump()
+    elif isinstance(tool_call, dict):
+        payload = dict(tool_call)
+    else:
+        extra_content = getattr(tool_call, "extra_content", None)
+        if extra_content is not None:
+            payload = {"extra_content": extra_content}
+
+    if not isinstance(payload, dict):
+        return {}
+
+    extras = {}
+    for key, value in payload.items():
+        if key in ("id", "type", "function") or value is None:
+            continue
+        extras[key] = value
+    return extras
+
+
+def _history_tool_call_entry(tool_call, call_id, function_name, stored_arguments):
+    """Build the assistant-history dict for one tool request.
+
+    Normalized fields always win:
+    - id is the real call id, or a generated call_<hex> id
+    - type stays "function" unless the provider already set one
+    - function.arguments is always a string
+
+    Any other provider fields (such as extra_content) are copied through
+    so the follow-up model request sees them.
+    """
+    entry = {
+        "id": call_id,
+        "type": getattr(tool_call, "type", None) or "function",
+        "function": {
+            "name": function_name,
+            "arguments": stored_arguments,
+        },
+    }
+    extras = _structured_tool_call_extras(tool_call)
+    if not extras:
+        return entry
+    return {**extras, **entry}
+
+
 def _authenticate_blizzard():
     """Ask Blizzard for an access token when the chat loop actually starts.
 
@@ -252,12 +345,15 @@ def _authenticate_blizzard():
 def run():
     """Start the interactive chat loop.
 
-    1. Refuse to start without Blizzard credentials (exit code 1, no traceback).
-    2. Authenticate with Blizzard.
-    3. Read user lines until they type quit.
-    4. For each line, call the model, run any tools, then print a reply.
+    1. Validate the selected LLM provider (exit code 1, no traceback).
+    2. Refuse to start without Blizzard credentials (exit code 1, no traceback).
+    3. Authenticate with Blizzard.
+    4. Read user lines until they type quit.
+    5. For each line, call the model, run any tools, then print a reply.
     """
     global history
+
+    validate_llm_provider()
 
     if not CLIENT_ID or not CLIENT_SECRET:
         print_missing_credentials_warning()
@@ -267,6 +363,7 @@ def run():
 
     # --- Updated Welcome Message ---
     print("\n🤖 Hello! I'm your Loremaster's Companion. (Type 'quit' to exit)")
+    print(f"AI provider: {llm_provider_label()} / {LLM_MODEL}")
     print("You can now ask me about anything in Azeroth naturally!")
     print("Examples:")
     print("   • Tell me about the mount Invincible")
@@ -300,7 +397,7 @@ def run():
 
         chat_completion = client.chat.completions.create(
             messages=messages,
-            model=MODEL_NAME,
+            model=LLM_MODEL,
             tools=TOOL_SCHEMAS,
             tool_choice="none" if is_conversational else "required"
         )
@@ -332,14 +429,14 @@ def run():
                     function_args, stored_arguments = _normalize_tool_arguments(tool_call.function.arguments)
 
                     call_id = tool_call.id if getattr(tool_call, "id", None) else f"call_{uuid.uuid4().hex}"
-                    assistant_tool_calls.append({
-                        "id": call_id,
-                        "type": "function",
-                        "function": {
-                            "name": function_name,
-                            "arguments": stored_arguments
-                        }
-                    })
+                    assistant_tool_calls.append(
+                        _history_tool_call_entry(
+                            tool_call,
+                            call_id,
+                            function_name,
+                            stored_arguments,
+                        )
+                    )
 
                     if function_args is None or not isinstance(function_args, dict):
                         tool_result = "Error parsing tool arguments."
@@ -376,7 +473,7 @@ def run():
                 # must write the in-character answer from that data only.
                 final_completion = client.chat.completions.create(
                     messages=[{"role": "system", "content": SYSTEM_PROMPT}] + history,
-                    model=MODEL_NAME
+                    model=LLM_MODEL
                 )
                 response = final_completion.choices[0].message.content
             finally:

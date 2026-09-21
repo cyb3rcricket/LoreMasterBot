@@ -18,7 +18,7 @@ A friendly campfire companion for exploring Azeroth lore with real-time Blizzard
   - Battle pets
   - Heirlooms
   - Current WoW Token price
-- Local model workflow with Ollama.
+- Local model workflow with Ollama by default, plus optional Gemini or custom OpenAI-compatible endpoints.
 - Credential loading from `.env`.
 - Automatic token refresh with retry logic.
 - In-memory caching for repeated API requests.
@@ -74,11 +74,14 @@ ollama serve
 ollama pull llama3.1:8b
 ```
 
-5. Create a `.env` file in the project root:
+5. Create a `.env` file in the project root (see `.env.example`). Minimum for the default local setup:
 
 ```env
 BLIZZARD_CLIENT_ID=your_client_id_here
 BLIZZARD_CLIENT_SECRET=your_client_secret_here
+LLM_PROVIDER=ollama
+LLM_MODEL=llama3.1:8b
+LLM_BASE_URL=http://localhost:11434/v1
 ```
 
 6. Run the bot:
@@ -108,6 +111,41 @@ Examples:
 
 Type `quit` to exit.
 
+## AI Provider
+
+LoreMasterBot talks to the language model through the existing OpenAI Python client. The same chat loop is used for every provider. Set `LLM_PROVIDER` in `.env` to choose one:
+
+- **Ollama** — local/private. No cloud API key required.
+- **Gemini** — cloud mode using your Gemini API key and Google's OpenAI-compatible endpoint.
+- **Custom** — any compatible OpenAI-style endpoint.
+
+Ollama:
+
+```env
+LLM_PROVIDER=ollama
+LLM_MODEL=llama3.1:8b
+LLM_BASE_URL=http://localhost:11434/v1
+```
+
+Gemini:
+
+```env
+LLM_PROVIDER=gemini
+LLM_MODEL=<your Gemini model>
+GEMINI_API_KEY=<your key>
+```
+
+Custom:
+
+```env
+LLM_PROVIDER=custom
+LLM_MODEL=<model>
+LLM_BASE_URL=<endpoint>
+LLM_API_KEY=<key>
+```
+
+Do not commit real API keys. Unused provider keys can be left blank.
+
 ## Run tests
 
 ```bash
@@ -115,6 +153,6 @@ python -m pytest -q
 ```
 
 ## Security Note
-- Keep Blizzard credentials in `.env`.
+- Keep Blizzard and LLM credentials in `.env`.
 - Never commit `.env`.
-- If credentials are missing, the bot exits with a clear warning.
+- If required credentials for the selected provider are missing, the bot exits with a clear warning.

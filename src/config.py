@@ -4,6 +4,7 @@
 # network. It only loads secrets from the environment and defines the text that
 # tells the language model how to behave.
 import os
+import sys
 
 from dotenv import load_dotenv
 
@@ -16,9 +17,69 @@ from dotenv import load_dotenv
 # if those names are not already set. os.getenv(...) then reads one name.
 load_dotenv()
 
-# Get Blizzard credentials from .env (create a .env file in the same folder)
+# Get Blizzard credentials from .env (create a .env file in the same folder).
+# These are separate from LLM credentials. Blizzard unlocks Game Data API
+# lookups; the LLM provider is who writes the spoken replies.
 CLIENT_ID = os.getenv("BLIZZARD_CLIENT_ID")
 CLIENT_SECRET = os.getenv("BLIZZARD_CLIENT_SECRET")
+
+# A "provider" is the service that runs the language model. Several providers
+# accept the same OpenAI Chat Completions format, so one OpenAI Python client
+# can talk to all of them. Only the URL and API key change.
+#
+# Supported values of LLM_PROVIDER:
+#   ollama  — local models, default, no cloud key required
+#   gemini  — Google Gemini through its OpenAI-compatible HTTP API
+#   custom  — any other OpenAI-compatible endpoint the user supplies
+VALID_LLM_PROVIDERS = ("ollama", "gemini", "custom")
+
+# Local Ollama defaults. Ollama is a program that runs models on this computer
+# and exposes an OpenAI-compatible API at this URL. Gemini and custom do not
+# get invented defaults for keys or model names.
+DEFAULT_OLLAMA_BASE_URL = "http://localhost:11434/v1"
+DEFAULT_OLLAMA_MODEL = "llama3.1:8b"
+
+# Google's documented OpenAI-compatible Gemini endpoint. The existing OpenAI
+# client can POST Chat Completions here; no extra Gemini SDK is required.
+GEMINI_OPENAI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai/"
+
+# Ollama ignores the API key, but the OpenAI client constructor requires one.
+OLLAMA_API_KEY = "ollama"
+
+
+def _env_text(name, default=""):
+    """Read one environment value and strip surrounding whitespace.
+
+    Empty or missing values become `default`. Whitespace-only values are
+    treated as missing so a blank line in `.env` does not count as a key.
+    """
+    value = os.getenv(name)
+    if value is None:
+        return default
+    return value.strip()
+
+
+# Default provider is local Ollama so an existing `.env` that only has
+# Blizzard keys keeps working. Unknown values are stored as-is (lowercased)
+# and rejected later at startup, not during import.
+LLM_PROVIDER = _env_text("LLM_PROVIDER", "ollama").lower() or "ollama"
+
+# Shared model name used by the chat loop. Ollama may fall back to the
+# documented local default. Gemini and custom require the user to set this.
+LLM_MODEL = _env_text("LLM_MODEL")
+if not LLM_MODEL and LLM_PROVIDER == "ollama":
+    LLM_MODEL = DEFAULT_OLLAMA_MODEL
+
+# Base URL for Ollama or a custom OpenAI-compatible server. Gemini ignores
+# this and uses GEMINI_OPENAI_BASE_URL instead.
+LLM_BASE_URL = _env_text("LLM_BASE_URL")
+if not LLM_BASE_URL and LLM_PROVIDER == "ollama":
+    LLM_BASE_URL = DEFAULT_OLLAMA_BASE_URL
+
+# LLM_API_KEY is only for LLM_PROVIDER=custom. GEMINI_API_KEY is only for
+# gemini. An unused key can be absent without breaking import or startup.
+LLM_API_KEY = _env_text("LLM_API_KEY")
+GEMINI_API_KEY = _env_text("GEMINI_API_KEY")
 
 
 def print_missing_credentials_warning():
@@ -32,6 +93,75 @@ def print_missing_credentials_warning():
     print("   BLIZZARD_CLIENT_ID=your_client_id_here")
     print("   BLIZZARD_CLIENT_SECRET=your_client_secret_here")
     print("   (Get a new set from https://develop.battle.net if needed)")
+
+
+def llm_provider_label():
+    """Short display name for the selected provider. Never includes secrets."""
+    return {
+        "ollama": "Ollama",
+        "gemini": "Gemini",
+        "custom": "Custom",
+    }.get(LLM_PROVIDER, LLM_PROVIDER)
+
+
+def llm_provider_error():
+    """Return a short startup error for the active provider, or None if valid.
+
+    Only the selected provider is checked. Ollama does not need a cloud key.
+    Gemini does not need LLM_API_KEY. Custom does not need GEMINI_API_KEY.
+    This function does not print keys and does not talk to the network.
+    """
+    if LLM_PROVIDER not in VALID_LLM_PROVIDERS:
+        return (
+            f"Unknown LLM_PROVIDER '{LLM_PROVIDER}'.\n"
+            "Valid choices: ollama, gemini, custom."
+        )
+
+    if LLM_PROVIDER == "ollama":
+        return None
+
+    if LLM_PROVIDER == "gemini":
+        if not GEMINI_API_KEY:
+            return (
+                "Gemini is selected, but GEMINI_API_KEY is missing.\n"
+                "Add GEMINI_API_KEY to your .env file."
+            )
+        if not LLM_MODEL:
+            return (
+                "Gemini is selected, but LLM_MODEL is missing.\n"
+                "Add LLM_MODEL to your .env file."
+            )
+        return None
+
+    # custom
+    if not LLM_BASE_URL:
+        return (
+            "Custom provider is selected, but LLM_BASE_URL is missing.\n"
+            "Add LLM_BASE_URL to your .env file."
+        )
+    if not LLM_API_KEY:
+        return (
+            "Custom provider is selected, but LLM_API_KEY is missing.\n"
+            "Add LLM_API_KEY to your .env file."
+        )
+    if not LLM_MODEL:
+        return (
+            "Custom provider is selected, but LLM_MODEL is missing.\n"
+            "Add LLM_MODEL to your .env file."
+        )
+    return None
+
+
+def validate_llm_provider():
+    """Exit cleanly if the selected LLM provider is missing required settings.
+
+    Called from run() at startup, before Blizzard checks. Importing this
+    module with an unused provider's key missing must stay safe.
+    """
+    error = llm_provider_error()
+    if error:
+        print(error)
+        sys.exit(1)
 
 
 # SYSTEM_PROMPT is attached to EVERY model request. A language model is a
@@ -58,8 +188,3 @@ Only if the user clearly asks about something completely outside World of Warcra
 
 Always stay 100% in character as the Loremaster's Companion. All responses must relate to World of Warcraft lore, characters, items, quests, or adventures.
 """
-
-# MODEL_NAME is the local Ollama model the OpenAI-compatible client will call.
-# Keeping it here makes the rest of the program read one setting instead of
-# scattering the string through the chat loop.
-MODEL_NAME = "llama3.1:8b"
