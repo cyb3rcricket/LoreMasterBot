@@ -261,6 +261,71 @@ def _normalize_tool_arguments(raw_arguments):
     return None, stored_arguments
 
 
+def _structured_tool_call_extras(tool_call):
+    """Copy extra fields from a real provider tool call.
+
+    Some OpenAI-compatible APIs attach extra data to a tool call besides
+    id, type, and function. Gemini 3, for example, may send
+    extra_content.google.thought_signature. That signature must be sent
+    back unchanged with the assistant tool call, or the next request can
+    fail.
+
+    Fallback ToolCall objects are built by LoreMasterBot's text parser.
+    They are not provider objects, so they get no invented extra fields.
+    """
+    if isinstance(tool_call, ToolCall):
+        return {}
+
+    payload = None
+    dump = getattr(tool_call, "model_dump", None)
+    if callable(dump):
+        try:
+            payload = dump(mode="json")
+        except TypeError:
+            payload = dump()
+    elif isinstance(tool_call, dict):
+        payload = dict(tool_call)
+    else:
+        extra_content = getattr(tool_call, "extra_content", None)
+        if extra_content is not None:
+            payload = {"extra_content": extra_content}
+
+    if not isinstance(payload, dict):
+        return {}
+
+    extras = {}
+    for key, value in payload.items():
+        if key in ("id", "type", "function") or value is None:
+            continue
+        extras[key] = value
+    return extras
+
+
+def _history_tool_call_entry(tool_call, call_id, function_name, stored_arguments):
+    """Build the assistant-history dict for one tool request.
+
+    Normalized fields always win:
+    - id is the real call id, or a generated call_<hex> id
+    - type stays "function" unless the provider already set one
+    - function.arguments is always a string
+
+    Any other provider fields (such as extra_content) are copied through
+    so the follow-up model request sees them.
+    """
+    entry = {
+        "id": call_id,
+        "type": getattr(tool_call, "type", None) or "function",
+        "function": {
+            "name": function_name,
+            "arguments": stored_arguments,
+        },
+    }
+    extras = _structured_tool_call_extras(tool_call)
+    if not extras:
+        return entry
+    return {**extras, **entry}
+
+
 def _authenticate_blizzard():
     """Ask Blizzard for an access token when the chat loop actually starts.
 
@@ -364,14 +429,14 @@ def run():
                     function_args, stored_arguments = _normalize_tool_arguments(tool_call.function.arguments)
 
                     call_id = tool_call.id if getattr(tool_call, "id", None) else f"call_{uuid.uuid4().hex}"
-                    assistant_tool_calls.append({
-                        "id": call_id,
-                        "type": "function",
-                        "function": {
-                            "name": function_name,
-                            "arguments": stored_arguments
-                        }
-                    })
+                    assistant_tool_calls.append(
+                        _history_tool_call_entry(
+                            tool_call,
+                            call_id,
+                            function_name,
+                            stored_arguments,
+                        )
+                    )
 
                     if function_args is None or not isinstance(function_args, dict):
                         tool_result = "Error parsing tool arguments."
