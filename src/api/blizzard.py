@@ -168,7 +168,7 @@ def search_blizzard(search_term, entity_type, access_token):
         "_pageSize": 5,
     }
 
-    if normalized_type in ["quest", "achievement"]:
+    if normalized_type in ["quest", "achievement", "journal-encounter"]:
         search_attempts = (
             ("name.en_US", "Error during search with name.en_US"),
             ("name", "Error during search with name"),
@@ -312,3 +312,416 @@ def get_wow_token_price(access_token):
     except Exception as e:
         print(f"Error getting WoW Token price: {e}")
         return None
+
+
+# How many name matches from a static index may be fetched in one lookup.
+# Specializations such as "Frost" exist on more than one class.
+MAX_INDEX_MATCHES = 5
+# Reputation-tier index entries often have IDs and no names. Cap the number
+# of detail documents loaded for an overview so one question cannot fan out
+# into unbounded HTTP calls.
+MAX_REPUTATION_TIER_DOCS = 40
+
+
+def _get_static_document(path, cache_key, access_token):
+    """GET a static-us Game Data document and remember it in data_cache.
+
+    path is the piece after /data/wow/, such as playable-race/index.
+    cache_key is the data_cache tuple. Returns a dict, or None on HTTP,
+    JSON, or type errors so handlers can show a not-found message.
+    """
+    if cache_key in data_cache:
+        return data_cache[cache_key]
+
+    url = f"https://us.api.blizzard.com/data/wow/{path}"
+    headers = {"Authorization": f"Bearer {access_token}"}
+    params = {"namespace": "static-us", "locale": "en_US"}
+    try:
+        response = requests.get(url, params=params, headers=headers, timeout=BLIZZARD_API_TIMEOUT)
+        response.raise_for_status()
+        data = response.json()
+        if not isinstance(data, dict):
+            print(f"Error getting {path.replace('-', ' ')} data: expected a JSON object")
+            return None
+        data_cache[cache_key] = data
+        return data
+    except Exception as e:
+        print(f"Error getting {path.replace('-', ' ')} data: {e}")
+        return None
+
+
+def get_index_data(entity_type, access_token):
+    """Fetch /data/wow/{entity_type}/index and cache it as static data."""
+    if not entity_type or not isinstance(entity_type, str):
+        return None
+    return _get_static_document(f"{entity_type}/index", (entity_type, "index"), access_token)
+
+
+def _entry_name(entry):
+    """Return a display name string from an index/detail entry, or None."""
+    if not isinstance(entry, dict):
+        return None
+    name = entry.get("name")
+    if isinstance(name, str) and name.strip():
+        return name
+    if isinstance(name, dict):
+        localized = name.get("en_US")
+        if isinstance(localized, str) and localized.strip():
+            return localized
+        for value in name.values():
+            if isinstance(value, str) and value.strip():
+                return value
+    return None
+
+
+def _iter_named_index_entries(payload):
+    """Yield dicts that have both id and name from a Blizzard index document."""
+    if isinstance(payload, dict):
+        if "id" in payload and _entry_name(payload) is not None:
+            yield payload
+        for key, value in payload.items():
+            if key in ("_links", "key", "href"):
+                continue
+            yield from _iter_named_index_entries(value)
+    elif isinstance(payload, list):
+        for item in payload:
+            yield from _iter_named_index_entries(item)
+
+
+def _iter_index_ids(payload):
+    """Yield id values from an index document, including nameless entries."""
+    if isinstance(payload, dict):
+        if "id" in payload:
+            yield payload["id"]
+        for key, value in payload.items():
+            if key in ("_links", "key", "href"):
+                continue
+            yield from _iter_index_ids(value)
+    elif isinstance(payload, list):
+        for item in payload:
+            yield from _iter_index_ids(item)
+
+
+def _unique_ids(ids, limit=MAX_INDEX_MATCHES):
+    """Preserve first-seen order and cap how many IDs are returned."""
+    unique = []
+    seen = set()
+    for entity_id in ids:
+        if entity_id in seen:
+            continue
+        seen.add(entity_id)
+        unique.append(entity_id)
+        if len(unique) >= limit:
+            break
+    return unique
+
+
+def _match_index_ids(index_data, search_term, limit=MAX_INDEX_MATCHES):
+    """Choose official IDs whose names match a natural-language query.
+
+    Order of preference:
+    1. Exact case-insensitive name.
+    2. Exact name after dropping a trailing English plural 's'.
+    3. An index name contained in the query (so 'Human race' hits Human).
+    4. The query contained in an index name.
+    """
+    if not index_data or not search_term or not isinstance(search_term, str):
+        return []
+
+    query = search_term.strip().lower()
+    if not query:
+        return []
+
+    entries = []
+    seen_pairs = set()
+    for entry in _iter_named_index_entries(index_data):
+        name = _entry_name(entry)
+        entity_id = entry.get("id")
+        pair = (entity_id, name)
+        if name is None or entity_id is None or pair in seen_pairs:
+            continue
+        seen_pairs.add(pair)
+        entries.append((entity_id, name))
+
+    def exact(candidate):
+        return [entity_id for entity_id, name in entries if name.lower() == candidate]
+
+    ids = exact(query)
+    if not ids and query.endswith("s") and len(query) > 3:
+        ids = exact(query[:-1])
+    if not ids:
+        contained = [
+            (entity_id, name)
+            for entity_id, name in entries
+            if len(name) >= 3 and name.lower() in query
+        ]
+        contained.sort(key=lambda item: len(item[1]), reverse=True)
+        ids = [entity_id for entity_id, _name in contained]
+    if not ids:
+        ids = [entity_id for entity_id, name in entries if query in name.lower()]
+    return _unique_ids(ids, limit=limit)
+
+
+def lookup_static_ids(search_term, entity_type, access_token):
+    """Resolve a display name to official IDs using a cached static index.
+
+    Used when Blizzard does not offer a Search API for that entity family.
+    Returns a list of IDs, possibly empty.
+    """
+    if not search_term or not isinstance(search_term, str) or not entity_type:
+        return []
+
+    normalized_term = search_term.strip().lower()
+    if not normalized_term:
+        return []
+
+    cache_key = ("index-lookup", entity_type, normalized_term)
+    if cache_key in search_cache:
+        cached = search_cache[cache_key]
+        return list(cached) if isinstance(cached, list) else []
+
+    index_data = get_index_data(entity_type, access_token)
+    ids = _match_index_ids(index_data, search_term)
+    search_cache[cache_key] = ids
+    return ids
+
+
+def list_index_names(entity_type, access_token):
+    """Return official names from a static index, or None if it cannot be loaded."""
+    index_data = get_index_data(entity_type, access_token)
+    if not index_data:
+        return None
+    names = []
+    seen = set()
+    for entry in _iter_named_index_entries(index_data):
+        name = _entry_name(entry)
+        if name and name not in seen:
+            seen.add(name)
+            names.append(name)
+    return names
+
+
+def lookup_journal_encounter_ids(search_term, access_token):
+    """Resolve a boss/encounter name via Search, then the encounter index."""
+    found = search_blizzard(search_term, "journal-encounter", access_token)
+    if found is not None:
+        return [found]
+    return lookup_static_ids(search_term, "journal-encounter", access_token)
+
+
+def get_journal_encounter_data(encounter_id, access_token):
+    """Fetches data for a specific dungeon-journal encounter using the access token."""
+    return _get_entity_data("journal-encounter", encounter_id, access_token)
+
+
+def get_journal_expansion_data(expansion_id, access_token):
+    """Fetches data for a specific journal expansion using the access token."""
+    return _get_entity_data("journal-expansion", expansion_id, access_token)
+
+
+def get_playable_race_data(race_id, access_token):
+    """Fetches data for a specific playable race using the access token."""
+    return _get_entity_data("playable-race", race_id, access_token)
+
+
+def get_playable_class_data(class_id, access_token):
+    """Fetches data for a specific playable class using the access token."""
+    return _get_entity_data("playable-class", class_id, access_token)
+
+
+def get_playable_specialization_data(spec_id, access_token):
+    """Fetches data for a specific playable specialization using the access token."""
+    return _get_entity_data("playable-specialization", spec_id, access_token)
+
+
+def get_profession_data(profession_id, access_token):
+    """Fetches data for a specific profession using the access token."""
+    return _get_entity_data("profession", profession_id, access_token)
+
+
+def get_profession_skill_tier_data(profession_id, skill_tier_id, access_token):
+    """Fetches one profession skill-tier document using the access token."""
+    profession_text = str(profession_id).strip()
+    tier_text = str(skill_tier_id).strip()
+    cache_profession = int(profession_text) if profession_text.isdigit() else profession_id
+    cache_tier = int(tier_text) if tier_text.isdigit() else skill_tier_id
+    return _get_static_document(
+        f"profession/{profession_id}/skill-tier/{skill_tier_id}",
+        ("profession-skill-tier", (cache_profession, cache_tier)),
+        access_token,
+    )
+
+
+def get_item_set_data(item_set_id, access_token):
+    """Fetches data for a specific item set using the access token."""
+    return _get_entity_data("item-set", item_set_id, access_token)
+
+
+def get_quest_area_data(quest_area_id, access_token):
+    """Fetches data for a specific quest area using the access token."""
+    return _get_entity_data("quest/area", quest_area_id, access_token)
+
+
+def get_quest_category_data(quest_category_id, access_token):
+    """Fetches data for a specific quest category using the access token."""
+    return _get_entity_data("quest/category", quest_category_id, access_token)
+
+
+def get_quest_type_data(quest_type_id, access_token):
+    """Fetches data for a specific quest type using the access token."""
+    return _get_entity_data("quest/type", quest_type_id, access_token)
+
+
+def get_creature_family_data(family_id, access_token):
+    """Fetches data for a specific creature family using the access token."""
+    return _get_entity_data("creature-family", family_id, access_token)
+
+
+def get_creature_type_data(type_id, access_token):
+    """Fetches data for a specific creature type using the access token."""
+    return _get_entity_data("creature-type", type_id, access_token)
+
+
+def get_reputation_tiers_data(tiers_id, access_token):
+    """Fetches one reputation-tiers document using the access token."""
+    return _get_entity_data("reputation-tiers", tiers_id, access_token)
+
+
+def get_entity_media(media_type, entity_id, access_token):
+    """Fetch official media metadata for an entity. Does not download assets."""
+    if not media_type or not isinstance(media_type, str):
+        return None
+    return _get_entity_data(f"media/{media_type}", entity_id, access_token)
+
+
+def with_official_media(data, media_type, entity_id, access_token):
+    """Copy entity data and attach official_media when Blizzard has assets.
+
+    The cached entity document is left unchanged. Media failures are ignored
+    so a missing icon does not hide the structured record.
+    """
+    if not isinstance(data, dict):
+        return data
+    media = get_entity_media(media_type, entity_id, access_token)
+    if not media:
+        return data
+    combined = dict(data)
+    combined["official_media"] = media
+    return combined
+
+
+def _is_classic_reputation_set(document):
+    """True when a tiers document includes the classic Hated and Exalted names."""
+    names = set()
+    for tier in document.get("tiers") or []:
+        if isinstance(tier, dict) and isinstance(tier.get("name"), str):
+            names.add(tier["name"].lower())
+    return "hated" in names and "exalted" in names
+
+
+def _reputation_tier_summary(document):
+    """Project official standing names from one reputation-tiers document."""
+    standings = []
+    for tier in document.get("tiers") or []:
+        if isinstance(tier, dict) and isinstance(tier.get("name"), str):
+            standings.append(tier["name"])
+    faction = document.get("faction")
+    faction_name = faction.get("name") if isinstance(faction, dict) else None
+    return {
+        "id": document.get("id"),
+        "name": document.get("name"),
+        "faction": faction_name,
+        "standings": standings,
+    }
+
+
+def _reputation_document_matches(document, query):
+    """True when query matches a faction, system, or standing name in the document."""
+    names = []
+    if isinstance(document.get("name"), str):
+        names.append(document["name"])
+    faction = document.get("faction")
+    if isinstance(faction, dict) and isinstance(faction.get("name"), str):
+        names.append(faction["name"])
+    for tier in document.get("tiers") or []:
+        if isinstance(tier, dict) and isinstance(tier.get("name"), str):
+            names.append(tier["name"])
+    for name in names:
+        lowered = name.lower()
+        if query == lowered or (len(name) >= 3 and (query in lowered or lowered in query)):
+            return True
+    return False
+
+
+def get_all_reputation_tiers(access_token):
+    """Load reputation-tier documents from the official index, cached per id."""
+    index_data = get_index_data("reputation-tiers", access_token)
+    if not index_data:
+        return None
+    ids = _unique_ids(_iter_index_ids(index_data), limit=MAX_REPUTATION_TIER_DOCS)
+    documents = []
+    for tiers_id in ids:
+        data = get_reputation_tiers_data(tiers_id, access_token)
+        if data:
+            documents.append(data)
+    return documents or None
+
+
+def find_reputation_tiers(search_term, access_token):
+    """Return official reputation standing data for a generic or named query."""
+    documents = get_all_reputation_tiers(access_token)
+    if not documents:
+        return None
+
+    query = search_term.strip().lower() if isinstance(search_term, str) else ""
+    generic_terms = {
+        "",
+        "reputation",
+        "reputation levels",
+        "reputation level",
+        "reputation tiers",
+        "standings",
+        "standing",
+        "levels",
+        "classic",
+        "classic reputation",
+        "classic standings",
+    }
+    classic_docs = [doc for doc in documents if _is_classic_reputation_set(doc)]
+    if query in generic_terms:
+        standard = classic_docs[0] if classic_docs else documents[0]
+        others = [
+            _reputation_tier_summary(doc)
+            for doc in documents
+            if doc is not standard
+        ]
+        return {
+            "standard_standings": standard,
+            "other_reputation_systems": others,
+        }
+
+    matched = [doc for doc in documents if _reputation_document_matches(doc, query)]
+    return matched or None
+
+
+def maybe_matching_skill_tier(profession_data, search_term, access_token):
+    """Fetch a skill-tier document when the query equals an official tier name.
+
+    Profession detail already lists skill-tier names. A second request is only
+    made when the user asked for that tier by name, because recipe lists are large.
+    """
+    if not isinstance(profession_data, dict) or not isinstance(search_term, str):
+        return None
+    query = search_term.strip().lower()
+    if not query:
+        return None
+    profession_id = profession_data.get("id")
+    for tier in profession_data.get("skill_tiers") or []:
+        if not isinstance(tier, dict):
+            continue
+        name = _entry_name(tier)
+        tier_id = tier.get("id")
+        if name and tier_id is not None and name.lower() == query:
+            return get_profession_skill_tier_data(profession_id, tier_id, access_token)
+    return None
+
