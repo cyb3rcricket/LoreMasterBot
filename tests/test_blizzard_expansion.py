@@ -171,7 +171,15 @@ def test_search_creature_is_not_a_lore_biography_tool():
     assert "sylvanas" not in blob
     assert "biography" in schema["description"].lower() or "lore-character" in schema["description"].lower()
     example = schema["parameters"]["properties"]["search_term"]["description"]
-    assert "Young Nightsaber" in example or "Ragnaros" in example
+    assert "Young Nightsaber" in example
+    assert "Stormwind Guard" in example
+
+
+def test_search_creature_example_is_not_a_journal_boss():
+    """The creature-tool example must not overlap with dungeon-journal bosses."""
+    example = _schema("search_creature")["parameters"]["properties"]["search_term"]["description"].lower()
+    for boss in ("ragnaros", "the lich king", "professor putricide", "onyxia"):
+        assert boss not in example
 
 
 def test_system_prompt_forbids_biography_from_memory():
@@ -392,6 +400,45 @@ def test_lookup_static_ids_plural_and_contained_name(monkeypatch):
     assert blizzard.lookup_static_ids("the Human race", "playable-race", "token") == [1]
 
 
+RACE_INDEX_FOR_PLURALS = {
+    "races": [
+        {"id": 1, "name": "Human"},
+        {"id": 3, "name": "Dwarf"},
+        {"id": 4, "name": "Night Elf"},
+        {"id": 10, "name": "Blood Elf"},
+        {"id": 29, "name": "Void Elf"},
+    ]
+}
+
+
+@pytest.mark.parametrize(
+    "query,expected_id",
+    [
+        ("Night Elves", 4),
+        ("Blood Elves", 10),
+        ("Void Elves", 29),
+        ("Dwarves", 3),
+        ("Humans", 1),
+        ("Night Elf", 4),
+        ("Blood Elf", 10),
+        ("Dwarf", 3),
+        ("Human", 1),
+    ],
+)
+def test_lookup_static_ids_irregular_and_regular_plurals(query, expected_id, monkeypatch):
+    """Common English plurals resolve to official singular index names."""
+    monkeypatch.setattr("requests.get", MagicMock(return_value=_json_response(RACE_INDEX_FOR_PLURALS)))
+    assert blizzard.lookup_static_ids(query, "playable-race", "token") == [expected_id]
+
+
+def test_lookup_static_ids_death_knight_plural_and_singular(monkeypatch):
+    class_index = {"classes": [{"id": 6, "name": "Death Knight"}, {"id": 1, "name": "Warrior"}]}
+    monkeypatch.setattr("requests.get", MagicMock(return_value=_json_response(class_index)))
+    assert blizzard.lookup_static_ids("Death Knights", "playable-class", "token") == [6]
+    blizzard.search_cache.clear()
+    assert blizzard.lookup_static_ids("Death Knight", "playable-class", "token") == [6]
+
+
 def test_journal_encounter_search_then_detail(monkeypatch):
     search_payload = {
         "results": [
@@ -490,34 +537,120 @@ def test_profession_skill_tier_path_and_optional_recipe_fetch(monkeypatch):
     assert blizzard.maybe_matching_skill_tier(profession, "Blacksmithing", "token") is None
 
 
-def test_reputation_tiers_overview_and_named_standing(monkeypatch):
-    index = {"reputation_tiers": [{"id": 2}, {"id": 201}]}
-    classic = {
+def _reputation_index_payload():
+    return {"reputation_tiers": [{"id": 2}, {"id": 201}, {"id": 999}]}
+
+
+def _classic_reputation_doc():
+    return {
         "id": 2,
         "faction": {"name": "Classic"},
-        "tiers": [{"name": "Hated"}, {"name": "Exalted"}],
+        "tiers": [{"name": "Hated"}, {"name": "Hostile"}, {"name": "Exalted"}],
     }
-    other = {
+
+
+def _renown_reputation_doc():
+    return {
         "id": 201,
         "faction": {"name": "Renown"},
         "tiers": [{"name": "Renown 1"}, {"name": "Renown 40"}],
     }
+
+
+def _unused_reputation_doc():
+    return {
+        "id": 999,
+        "faction": {"name": "Friendship"},
+        "tiers": [{"name": "Stranger"}, {"name": "Buddy"}],
+    }
+
+
+def test_generic_reputation_query_stops_after_classic_set(monkeypatch):
+    """A generic standing question must not fetch every indexed tier document."""
     mock_get = MagicMock(side_effect=[
-        _json_response(index),
-        _json_response(classic),
-        _json_response(other),
+        _json_response(_reputation_index_payload()),
+        _json_response(_classic_reputation_doc()),
+        _json_response(_renown_reputation_doc()),
+        _json_response(_unused_reputation_doc()),
     ])
     monkeypatch.setattr("requests.get", mock_get)
 
     overview = blizzard.find_reputation_tiers("reputation levels", "token")
     assert overview["standard_standings"]["id"] == 2
-    assert any(item.get("faction") == "Renown" for item in overview["other_reputation_systems"])
+    assert any(tier["name"] == "Hated" for tier in overview["standard_standings"]["tiers"])
+    assert any(tier["name"] == "Exalted" for tier in overview["standard_standings"]["tiers"])
+    assert mock_get.call_count == 2
     assert mock_get.call_args_list[0].args[0].endswith("/data/wow/reputation-tiers/index")
     assert mock_get.call_args_list[1].args[0].endswith("/data/wow/reputation-tiers/2")
 
+
+def test_targeted_exalted_query_stops_at_first_match(monkeypatch):
+    mock_get = MagicMock(side_effect=[
+        _json_response(_reputation_index_payload()),
+        _json_response(_classic_reputation_doc()),
+        _json_response(_renown_reputation_doc()),
+    ])
+    monkeypatch.setattr("requests.get", mock_get)
+
     named = blizzard.find_reputation_tiers("Exalted", "token")
     assert named[0]["id"] == 2
+    assert mock_get.call_count == 2
+
+
+def test_targeted_renown_query_can_skip_nonmatching_then_stop(monkeypatch):
+    mock_get = MagicMock(side_effect=[
+        _json_response(_reputation_index_payload()),
+        _json_response(_classic_reputation_doc()),
+        _json_response(_renown_reputation_doc()),
+        _json_response(_unused_reputation_doc()),
+    ])
+    monkeypatch.setattr("requests.get", mock_get)
+
+    named = blizzard.find_reputation_tiers("Renown", "token")
+    assert named[0]["id"] == 201
     assert mock_get.call_count == 3
+    fetched_urls = [call.args[0] for call in mock_get.call_args_list]
+    assert fetched_urls[1].endswith("/data/wow/reputation-tiers/2")
+    assert fetched_urls[2].endswith("/data/wow/reputation-tiers/201")
+    assert not any(url.endswith("/data/wow/reputation-tiers/999") for url in fetched_urls)
+
+
+def test_reputation_tier_cache_avoids_repeat_detail_fetches(monkeypatch):
+    mock_get = MagicMock(side_effect=[
+        _json_response(_reputation_index_payload()),
+        _json_response(_classic_reputation_doc()),
+    ])
+    monkeypatch.setattr("requests.get", mock_get)
+
+    first = blizzard.find_reputation_tiers("reputation", "token")
+    second = blizzard.find_reputation_tiers("classic reputation", "token")
+    named = blizzard.find_reputation_tiers("Exalted", "token")
+    assert first["standard_standings"]["id"] == 2
+    assert second["standard_standings"]["id"] == 2
+    assert named[0]["id"] == 2
+    assert mock_get.call_count == 2
+
+
+def test_reputation_tiers_not_found_and_http_failure_are_safe(monkeypatch):
+    unknown = {
+        "id": 2,
+        "faction": {"name": "Classic"},
+        "tiers": [{"name": "Hated"}, {"name": "Exalted"}],
+    }
+    mock_get = MagicMock(side_effect=[
+        _json_response(_reputation_index_payload()),
+        _json_response(unknown),
+        _json_response(_renown_reputation_doc()),
+        _json_response(_unused_reputation_doc()),
+    ])
+    monkeypatch.setattr("requests.get", mock_get)
+    assert blizzard.find_reputation_tiers("Not A Standing", "token") is None
+    assert mock_get.call_count == 4
+
+    blizzard.data_cache.clear()
+    blizzard.search_cache.clear()
+    monkeypatch.setattr("requests.get", MagicMock(return_value=_json_response({}, status=500)))
+    assert blizzard.find_reputation_tiers("reputation levels", "token") is None
 
 
 def test_quest_area_category_and_type_paths(monkeypatch):

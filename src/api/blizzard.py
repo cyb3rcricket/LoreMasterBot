@@ -317,10 +317,24 @@ def get_wow_token_price(access_token):
 # How many name matches from a static index may be fetched in one lookup.
 # Specializations such as "Frost" exist on more than one class.
 MAX_INDEX_MATCHES = 5
-# Reputation-tier index entries often have IDs and no names. Cap the number
-# of detail documents loaded for an overview so one question cannot fan out
-# into unbounded HTTP calls.
+# Reputation-tier index entries often have IDs and no names. This is a
+# safety cap, not the default fetch count. Common queries stop as soon as
+# they have enough official data.
 MAX_REPUTATION_TIER_DOCS = 40
+
+_GENERIC_REPUTATION_TERMS = frozenset({
+    "",
+    "reputation",
+    "reputation levels",
+    "reputation level",
+    "reputation tiers",
+    "standings",
+    "standing",
+    "levels",
+    "classic",
+    "classic reputation",
+    "classic standings",
+})
 
 
 def _get_static_document(path, cache_key, access_token):
@@ -416,12 +430,42 @@ def _unique_ids(ids, limit=MAX_INDEX_MATCHES):
     return unique
 
 
+def _singularize_query(query):
+    """Return light English plural foldings of a lowercase query.
+
+    Exact official names are tried first by the caller. These alternatives
+    only help when the user typed a common plural such as Night Elves or
+    Dwarves. Irregular endings are tried before a trailing 's' so
+    'night elves' becomes 'night elf', not 'night elve'.
+    """
+    if not query:
+        return []
+
+    candidates = []
+    if query.endswith("elves"):
+        candidates.append(query[:-5] + "elf")
+    if query.endswith("dwarves"):
+        candidates.append(query[:-7] + "dwarf")
+    if query.endswith("s") and len(query) > 3:
+        candidates.append(query[:-1])
+
+    unique = []
+    seen = set()
+    for candidate in candidates:
+        folded = candidate.strip()
+        if not folded or folded == query or folded in seen:
+            continue
+        seen.add(folded)
+        unique.append(folded)
+    return unique
+
+
 def _match_index_ids(index_data, search_term, limit=MAX_INDEX_MATCHES):
     """Choose official IDs whose names match a natural-language query.
 
     Order of preference:
     1. Exact case-insensitive name.
-    2. Exact name after dropping a trailing English plural 's'.
+    2. Exact name after a light English plural folding.
     3. An index name contained in the query (so 'Human race' hits Human).
     4. The query contained in an index name.
     """
@@ -447,8 +491,11 @@ def _match_index_ids(index_data, search_term, limit=MAX_INDEX_MATCHES):
         return [entity_id for entity_id, name in entries if name.lower() == candidate]
 
     ids = exact(query)
-    if not ids and query.endswith("s") and len(query) > 3:
-        ids = exact(query[:-1])
+    if not ids:
+        for candidate in _singularize_query(query):
+            ids = exact(candidate)
+            if ids:
+                break
     if not ids:
         contained = [
             (entity_id, name)
@@ -653,46 +700,44 @@ def _reputation_document_matches(document, query):
     return False
 
 
-def get_all_reputation_tiers(access_token):
-    """Load reputation-tier documents from the official index, cached per id."""
+def _reputation_index_ids(access_token):
+    """Return official reputation-tier IDs from the cached index, or None."""
     index_data = get_index_data("reputation-tiers", access_token)
     if not index_data:
         return None
-    ids = _unique_ids(_iter_index_ids(index_data), limit=MAX_REPUTATION_TIER_DOCS)
-    documents = []
-    for tiers_id in ids:
-        data = get_reputation_tiers_data(tiers_id, access_token)
-        if data:
-            documents.append(data)
-    return documents or None
+    return _unique_ids(_iter_index_ids(index_data), limit=MAX_REPUTATION_TIER_DOCS)
 
 
 def find_reputation_tiers(search_term, access_token):
-    """Return official reputation standing data for a generic or named query."""
-    documents = get_all_reputation_tiers(access_token)
-    if not documents:
+    """Return official reputation standing data for a generic or named query.
+
+    Detail documents are fetched one at a time from the official index and
+    stop as soon as the query is satisfied. Generic standing questions stop
+    at the classic Hated through Exalted set. Named queries stop at the
+    first matching document.
+    """
+    ids = _reputation_index_ids(access_token)
+    if not ids:
         return None
 
     query = search_term.strip().lower() if isinstance(search_term, str) else ""
-    generic_terms = {
-        "",
-        "reputation",
-        "reputation levels",
-        "reputation level",
-        "reputation tiers",
-        "standings",
-        "standing",
-        "levels",
-        "classic",
-        "classic reputation",
-        "classic standings",
-    }
-    classic_docs = [doc for doc in documents if _is_classic_reputation_set(doc)]
-    if query in generic_terms:
-        standard = classic_docs[0] if classic_docs else documents[0]
+    if query in _GENERIC_REPUTATION_TERMS:
+        fetched = []
+        classic = None
+        for tiers_id in ids:
+            data = get_reputation_tiers_data(tiers_id, access_token)
+            if not data:
+                continue
+            fetched.append(data)
+            if _is_classic_reputation_set(data):
+                classic = data
+                break
+        if not fetched:
+            return None
+        standard = classic or fetched[0]
         others = [
             _reputation_tier_summary(doc)
-            for doc in documents
+            for doc in fetched
             if doc is not standard
         ]
         return {
@@ -700,7 +745,14 @@ def find_reputation_tiers(search_term, access_token):
             "other_reputation_systems": others,
         }
 
-    matched = [doc for doc in documents if _reputation_document_matches(doc, query)]
+    matched = []
+    for tiers_id in ids:
+        data = get_reputation_tiers_data(tiers_id, access_token)
+        if not data:
+            continue
+        if _reputation_document_matches(data, query):
+            matched.append(data)
+            break
     return matched or None
 
 

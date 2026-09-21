@@ -37,7 +37,7 @@ _SEARCH_TOOL_SPECS = (
     (
         "search_creature",
         "You MUST call this tool whenever the user asks about a specific in-game WoW creature or NPC record by name (beasts, mobs, and named NPC game entities). Do NOT use this tool for lore-character biographies, playable races, playable classes, dungeon-journal bosses, creature families, or creature types. This is non-negotiable. Always call the tool FIRST — never answer from memory or your training data, even if you think you know it.",
-        "The name of the creature or NPC record, e.g. 'Young Nightsaber' or 'Ragnaros'",
+        "The name of the creature or NPC record, e.g. 'Young Nightsaber' or 'Stormwind Guard'",
     ),
     (
         "search_item_by_name",
