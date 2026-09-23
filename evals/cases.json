@@ -1,0 +1,42 @@
+[
+    {
+      "id": "eval-001",
+      "category": "tool_selection",
+      "prompt": "Tell me about the mount Invincible.",
+      "expected_tool": "search_mount_by_name",
+      "expected_behavior": "The model should call search_mount_by_name before answering and use the returned Blizzard data to produce the final response instead of answering from memory.",
+      "notes": "Basic happy-path test for selecting the correct tool for a named WoW mount."
+    },
+    {
+      "id": "eval-002",
+      "category": "tool_selection",
+      "prompt": "Tell me about Thunderfury.",
+      "expected_tool": "search_item_by_name",
+      "expected_behavior": "The model should recognize Thunderfury as an item name, call search_item_by_name, and not send the name to lookup_item.",
+      "notes": "Tests the boundary between item-by-name and item-by-ID tool selection."
+    },
+    {
+      "id": "eval-003",
+      "category": "tool_selection",
+      "prompt": "Who is Professor Putricide?",
+      "expected_tool": "search_journal_encounter",
+      "expected_behavior": "The model should call search_journal_encounter and should not use search_creature for this named dungeon-journal boss.",
+      "notes": "Tests the boundary between generic creature/NPC lookup and dungeon-journal encounter lookup."
+    },
+    {
+      "id": "eval-004",
+      "category": "conversation_routing",
+      "prompt": "Hello!",
+      "expected_tool": "none",
+      "expected_behavior": "The model should respond conversationally without calling any Blizzard tool.",
+      "notes": "Tests that greetings stay in the conversational path instead of triggering an unnecessary tool call."
+    },
+    {
+      "id": "eval-005",
+      "category": "tool_selection",
+      "prompt": "Tell me about the Human race.",
+      "expected_tool": "search_playable_race",
+      "expected_behavior": "The model should call search_playable_race and should not use search_creature for a playable race.",
+      "notes": "Tests the boundary between playable-race lookup and generic creature/NPC lookup."
+    }
+  ]
