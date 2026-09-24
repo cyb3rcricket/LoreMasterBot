@@ -143,12 +143,17 @@ def search_blizzard(search_term, entity_type, access_token):
     `name.en_US` first and then plain `name`. Other types try `name.en_US` only.
 
     Famous items skip the network. Later repeats use search_cache.
+    A blank or whitespace-only name is not a search and must not be sent.
     """
-    if not search_term or not isinstance(search_term, str):
+    if not isinstance(search_term, str):
         return None
 
     normalized_type = entity_type.lower() if isinstance(entity_type, str) else str(entity_type)
+    # "   " is truthy, so strip before the empty check. Otherwise a blank
+    # name still becomes a Blizzard request.
     normalized_term = search_term.strip().lower()
+    if not normalized_term:
+        return None
     if normalized_type == "item" and normalized_term in famous_items:
         item_id = famous_items[normalized_term]
         key = (normalized_type, normalized_term)

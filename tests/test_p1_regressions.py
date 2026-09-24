@@ -202,6 +202,18 @@ def test_famous_item_fallback_is_case_insensitive(name, expected_id, variant, mo
     assert not mock_get.called, "Famous item fallback must not make any outbound network calls"
 
 
+@pytest.mark.parametrize("term", ["", "   ", "\t\n", None, 19019])
+def test_blank_search_term_does_not_call_blizzard(term, monkeypatch):
+    """Empty, whitespace-only, and non-string names must not hit the network."""
+    mock_get = MagicMock()
+    monkeypatch.setattr("requests.get", mock_get)
+    blizzard.search_cache.clear()
+
+    assert blizzard.search_blizzard(term, "creature", "token") is None
+    assert not mock_get.called
+    assert blizzard.search_cache == {}
+
+
 # ============================================================================
 # 4. ITEM TOOL CONTRACT / SCHEMA MISMATCH
 # ============================================================================
