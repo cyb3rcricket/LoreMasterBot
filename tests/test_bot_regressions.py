@@ -161,6 +161,24 @@ def test_standard_tool_calls_not_overwritten_by_fallback():
     assert response_message.content == '[{"name": "lookup_item", "arguments": {"item_name": "Ignored"}}]'
 
 
+def test_blank_assistant_reply_does_not_split_chat_session():
+    """A whitespace-only reply must not end a turn and orphan the tool result."""
+    history = [
+        {"role": "user", "content": "older question"},
+        {"role": "assistant", "content": "older answer"},
+        {"role": "user", "content": "Thunderfury"},
+        {"role": "assistant", "content": "   "},
+        {"role": "tool", "tool_call_id": "call_session", "content": "Item data"},
+        {"role": "assistant", "content": "The records name Thunderfury."},
+    ]
+
+    trimmed = src.bot.trim_history(history, max_turns=1)
+
+    assert trimmed[0]["content"] == "Thunderfury"
+    assert trimmed[-2]["role"] == "tool"
+    assert trimmed[-1]["content"] == "The records name Thunderfury."
+
+
 # ============================================================================
 # 3. Tool-call history is serializable and correctly linked
 # ============================================================================

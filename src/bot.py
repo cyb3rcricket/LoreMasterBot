@@ -194,7 +194,10 @@ def trim_history(history, max_turns=7):
             # Find the next assistant message with content (final response)
             j = i + 1
             while j < len(history):
-                if history[j]['role'] == 'assistant' and history[j].get('content'):
+                content = history[j].get('content')
+                if isinstance(content, str):
+                    content = content.strip()
+                if history[j]['role'] == 'assistant' and content:
                     turn_end = j
                     turns.append((turn_start, turn_end))
                     i = j
