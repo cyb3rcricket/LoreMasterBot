@@ -339,24 +339,36 @@ def test_importing_with_gemini_and_no_key_does_not_network_or_exit():
 
 def test_config_import_does_not_require_unused_provider_keys():
     """Default Ollama config import stays valid without Gemini or custom keys."""
-    env = {k: v for k, v in os.environ.items() if k not in {"GEMINI_API_KEY", "LLM_API_KEY", "LLM_PROVIDER"}}
-    env["PYTHONPATH"] = os.getcwd()
-    result = subprocess.run(
-        [
-            sys.executable,
-            "-c",
-            (
-                "import src.config as c;"
-                "assert c.LLM_PROVIDER == 'ollama';"
-                "assert c.LLM_MODEL == 'llama3.1:8b';"
-                "assert c.llm_provider_error() is None;"
-                "print('ok')"
-            ),
-        ],
-        env=env,
-        capture_output=True,
-        text=True,
-    )
+    with tempfile.TemporaryDirectory() as temp_dir:
+        env = {
+            k: v
+            for k, v in os.environ.items()
+            if k not in {
+                "GEMINI_API_KEY",
+                "LLM_API_KEY",
+                "LLM_PROVIDER",
+                "LLM_MODEL",
+                "LLM_BASE_URL",
+            }
+        }
+        env["PYTHONPATH"] = os.getcwd()
+        result = subprocess.run(
+            [
+                sys.executable,
+                "-c",
+                (
+                    "import src.config as c;"
+                    "assert c.LLM_PROVIDER == 'ollama';"
+                    "assert c.LLM_MODEL == 'llama3.1:8b';"
+                    "assert c.llm_provider_error() is None;"
+                    "print('ok')"
+                ),
+            ],
+            env=env,
+            cwd=temp_dir,
+            capture_output=True,
+            text=True,
+        )
 
     assert result.returncode == 0, result.stderr
     assert "ok" in result.stdout

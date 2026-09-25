@@ -5,18 +5,25 @@ A friendly campfire companion for exploring Azeroth lore with real-time Blizzard
 - In-character WoW lore assistant focused on Azeroth.
 - Natural language conversations with tool-based Blizzard lookups.
 - Blizzard Game Data API coverage:
-  - Creatures
+  - Creatures and NPC records
+  - Creature families and types
   - Items (by name or item ID)
-  - Quests
+  - Item sets
+  - Quests, plus quest areas, categories, and types
   - Mounts
   - Achievements
   - Spells and abilities
   - Raids and dungeons (Journal Instances)
-  - Reputation factions
+  - Journal encounters (dungeon-journal bosses)
+  - Journal expansions
+  - Playable races, classes, and specializations
+  - Professions and official skill-tier names
+  - Reputation factions and reputation standings/tiers
   - Titles
   - Toys
   - Battle pets
   - Heirlooms
+  - Official media metadata (icon/asset URLs) for supported entities
   - Current WoW Token price
 - Local model workflow with Ollama by default, plus optional Gemini or custom OpenAI-compatible endpoints.
 - Credential loading from `.env`.
@@ -24,6 +31,8 @@ A friendly campfire companion for exploring Azeroth lore with real-time Blizzard
 - In-memory caching for repeated API requests.
 - Loading spinner during Blizzard API fetches for better UX.
 - Smart conversation history management (keeps ~7 full turns for context).
+
+LoreMasterBot answers from official Blizzard structured Game Data only. It does **not** provide general character biographies, unofficial lore write-ups, or location guides beyond what those APIs return. If Blizzard has no structured record for a question, the bot will say so rather than inventing an answer.
 
 ## Project Structure
 The project is organized into a clean, modular structure for maintainability:
@@ -94,7 +103,13 @@ python main.py
 Type naturally, like you are talking to a fellow adventurer by the fire.
 
 Examples:
-- "Tell me about Arthas Menethil"
+- "Tell me about the Human race"
+- "Tell me about Death Knights"
+- "What is Frost specialization?"
+- "Who is Professor Putricide?"
+- "Tell me about Blacksmithing"
+- "What is the Judgement Armor set?"
+- "What reputation levels are there?"
 - "What is item 19019?"
 - "Tell me about Thunderfury"
 - "What is the quest The Lich King's Fall?"
@@ -108,6 +123,8 @@ Examples:
 - "Tell me about Pandaren Fire Spirit"
 - "What is Tattered Dreadmist Robe?"
 - "What is the current WoW Token price?"
+
+Questions about a famous character's life story (for example a full biography) are outside what Blizzard's structured Game Data APIs provide. The bot will admit that rather than filling the gap from model memory.
 
 Type `quit` to exit.
 
