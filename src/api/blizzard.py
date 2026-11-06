@@ -25,6 +25,7 @@ WOW_TOKEN_CACHE_TTL_SECONDS = 60
 # Unix time is seconds since 1970-01-01; time.time() returns that number.
 blizzard_token = None
 token_expiry = 0   # Unix timestamp when the current token expires
+last_error_was_auth = False
 
 # Caches remember earlier answers so the same search or item is not fetched
 # again in this process. Keys are tuples so type and id stay paired.
@@ -49,6 +50,26 @@ famous_items = {
 }
 
 
+def _is_valid_expires_in(expires_in):
+    """Return True only when expires_in is a positive int or float (never bool/None/str)."""
+    return (
+        not isinstance(expires_in, bool)
+        and isinstance(expires_in, (int, float))
+        and expires_in > 0
+    )
+
+
+def _is_unauthorized_error(exc, response=None):
+    """Return True when a requests error or response represents HTTP 401 Unauthorized."""
+    if response is not None and getattr(response, "status_code", None) == 401:
+        return True
+    exc_response = getattr(exc, "response", None)
+    if exc_response is not None and getattr(exc_response, "status_code", None) == 401:
+        return True
+    text = str(exc)
+    return "401" in text or "unauthorized" in text.lower()
+
+
 def get_access_token():
     """Ask Battle.net for a new access token.
 
@@ -69,8 +90,12 @@ def get_access_token():
             response = requests.post(url, data=data, auth=auth, timeout=BLIZZARD_API_TIMEOUT)
             response.raise_for_status()
             json_data = response.json()
+            if not isinstance(json_data, dict):
+                raise ValueError("Expected a JSON object from token endpoint")
             token = json_data.get("access_token")
             expires_in = json_data.get("expires_in", 3600)
+            if not isinstance(token, str) or not token.strip() or not _is_valid_expires_in(expires_in):
+                raise ValueError("Invalid access_token or expires_in in token response")
             return token, expires_in
         except Exception as e:
             print(f"Error getting access token: {e}")
@@ -86,8 +111,9 @@ def ensure_valid_token():
     """Return a usable token, refreshing if it is missing or nearly expired.
 
     Tokens expire. Refreshing 60 seconds early avoids using a token that dies
-    mid-request. Returns None if Blizzard cannot be reached so handlers can
-    show an unavailable message instead of crashing.
+    mid-request. If an early refresh fails while the current token has not
+    actually expired yet, the current token is returned so lookups continue.
+    Returns None if no valid token is available.
     """
     global blizzard_token, token_expiry
 
@@ -96,15 +122,53 @@ def ensure_valid_token():
         print("🔄 Refreshing Blizzard access token...")
         token, expires_in = get_access_token()
 
-        if token:
+        if isinstance(token, str) and token.strip() and _is_valid_expires_in(expires_in):
             blizzard_token = token
             token_expiry = time.time() + expires_in
             print("✅ Token refreshed successfully!")
         else:
             print("❌ Failed to refresh Blizzard token")
+            if blizzard_token and time.time() < token_expiry:
+                return blizzard_token
+            blizzard_token = None
+            token_expiry = 0
             return None
 
     return blizzard_token
+
+
+def _authorized_get(url, params, access_token):
+    """GET a Blizzard endpoint; on HTTP 401 drop the cached token and retry once with a fresh token."""
+    global blizzard_token, token_expiry, last_error_was_auth
+
+    last_error_was_auth = False
+    headers = {"Authorization": f"Bearer {access_token}"}
+    response = None
+    try:
+        response = requests.get(url, params=params, headers=headers, timeout=BLIZZARD_API_TIMEOUT)
+        response.raise_for_status()
+        return response
+    except Exception as exc:
+        if not _is_unauthorized_error(exc, response):
+            raise
+        blizzard_token = None
+        token_expiry = 0
+        new_token = ensure_valid_token()
+        if not new_token or new_token == access_token:
+            last_error_was_auth = True
+            raise
+        retry_headers = {"Authorization": f"Bearer {new_token}"}
+        retry_response = None
+        try:
+            retry_response = requests.get(url, params=params, headers=retry_headers, timeout=BLIZZARD_API_TIMEOUT)
+            retry_response.raise_for_status()
+            return retry_response
+        except Exception as retry_exc:
+            if _is_unauthorized_error(retry_exc, retry_response):
+                blizzard_token = None
+                token_expiry = 0
+                last_error_was_auth = True
+            raise
 
 
 def _pick_search_id(results, search_term):
@@ -117,7 +181,7 @@ def _pick_search_id(results, search_term):
     if not results:
         return None
 
-    lowered = search_term.lower()
+    lowered = search_term.strip().lower() if isinstance(search_term, str) else ""
     for result in results:
         try:
             name = result.get("data", {}).get("name", {}).get("en_US")
@@ -130,8 +194,9 @@ def _pick_search_id(results, search_term):
 
 def _search_request(url, params, headers):
     """One search GET. Raises on HTTP errors so the caller can retry or give up."""
-    response = requests.get(url, params=params, headers=headers, timeout=BLIZZARD_API_TIMEOUT)
-    response.raise_for_status()
+    auth_header = (headers or {}).get("Authorization", "")
+    token = auth_header[7:] if auth_header.startswith("Bearer ") else auth_header
+    response = _authorized_get(url, params, token)
     return response.json().get("results")
 
 
@@ -145,13 +210,17 @@ def search_blizzard(search_term, entity_type, access_token):
     Famous items skip the network. Later repeats use search_cache.
     A blank or whitespace-only name is not a search and must not be sent.
     """
+    global last_error_was_auth
+    last_error_was_auth = False
+
     if not isinstance(search_term, str):
         return None
 
     normalized_type = entity_type.lower() if isinstance(entity_type, str) else str(entity_type)
     # "   " is truthy, so strip before the empty check. Otherwise a blank
     # name still becomes a Blizzard request.
-    normalized_term = search_term.strip().lower()
+    stripped_term = search_term.strip()
+    normalized_term = stripped_term.lower()
     if not normalized_term:
         return None
     if normalized_type == "item" and normalized_term in famous_items:
@@ -165,7 +234,6 @@ def search_blizzard(search_term, entity_type, access_token):
         return search_cache[key]
 
     url = f"https://us.api.blizzard.com/data/wow/search/{normalized_type}"
-    headers = {"Authorization": f"Bearer {access_token}"}
     base_params = {
         "namespace": "static-us",
         "locale": "en_US",
@@ -182,15 +250,18 @@ def search_blizzard(search_term, entity_type, access_token):
         search_attempts = (("name.en_US", "Error during search"),)
 
     for name_field, error_prefix in search_attempts:
-        params = {**base_params, name_field: search_term}
+        headers = {"Authorization": f"Bearer {blizzard_token or access_token}"}
+        params = {**base_params, name_field: stripped_term}
         try:
             results = _search_request(url, params, headers)
-            exact_id = _pick_search_id(results, search_term)
+            exact_id = _pick_search_id(results, stripped_term)
             if exact_id is not None:
                 search_cache[key] = exact_id
                 return exact_id
         except Exception as e:
             print(f"{error_prefix}: {e}")
+            if last_error_was_auth:
+                break
     return None
 
 
@@ -204,6 +275,9 @@ def _get_entity_data(entity_type, entity_id, access_token):
     On any request or JSON error, print a line and return None. The chat
     loop then tells the model no official data was found.
     """
+    global last_error_was_auth
+    last_error_was_auth = False
+
     if entity_type == "item":
         cache_id = int(str(entity_id).strip()) if str(entity_id).strip().isdigit() else entity_id
     else:
@@ -213,11 +287,9 @@ def _get_entity_data(entity_type, entity_id, access_token):
         return data_cache[key]
 
     url = f"https://us.api.blizzard.com/data/wow/{entity_type}/{entity_id}"
-    headers = {"Authorization": f"Bearer {access_token}"}
     params = {"namespace": "static-us", "locale": "en_US"}
     try:
-        response = requests.get(url, params=params, headers=headers, timeout=BLIZZARD_API_TIMEOUT)
-        response.raise_for_status()
+        response = _authorized_get(url, params, access_token)
         data = response.json()
         data_cache[key] = data
         return data
@@ -294,16 +366,17 @@ def get_wow_token_price(access_token):
     If the system clock jumps backward, elapsed time is treated as invalid
     and the price is fetched again.
     """
+    global last_error_was_auth
+    last_error_was_auth = False
+
     now = time.time()
     if wow_token_cache["data"] is not None and 0 <= (now - wow_token_cache["timestamp"]) < WOW_TOKEN_CACHE_TTL_SECONDS:
         return wow_token_cache["data"]
 
     url = "https://us.api.blizzard.com/data/wow/token/"
-    headers = {"Authorization": f"Bearer {access_token}"}
     params = {"namespace": "dynamic-us", "locale": "en_US"}
     try:
-        response = requests.get(url, params=params, headers=headers, timeout=BLIZZARD_API_TIMEOUT)
-        response.raise_for_status()
+        response = _authorized_get(url, params, access_token)
         data = response.json()
         price_in_copper = data.get("price")
         if not isinstance(price_in_copper, (int, float)) or price_in_copper <= 0:
@@ -349,15 +422,16 @@ def _get_static_document(path, cache_key, access_token):
     cache_key is the data_cache tuple. Returns a dict, or None on HTTP,
     JSON, or type errors so handlers can show a not-found message.
     """
+    global last_error_was_auth
+    last_error_was_auth = False
+
     if cache_key in data_cache:
         return data_cache[cache_key]
 
     url = f"https://us.api.blizzard.com/data/wow/{path}"
-    headers = {"Authorization": f"Bearer {access_token}"}
     params = {"namespace": "static-us", "locale": "en_US"}
     try:
-        response = requests.get(url, params=params, headers=headers, timeout=BLIZZARD_API_TIMEOUT)
-        response.raise_for_status()
+        response = _authorized_get(url, params, access_token)
         data = response.json()
         if not isinstance(data, dict):
             print(f"Error getting {path.replace('-', ' ')} data: expected a JSON object")
@@ -518,7 +592,8 @@ def lookup_static_ids(search_term, entity_type, access_token):
     """Resolve a display name to official IDs using a cached static index.
 
     Used when Blizzard does not offer a Search API for that entity family.
-    Returns a list of IDs, possibly empty.
+    Returns a list of IDs, possibly empty. Does not cache when the index
+    document itself failed to load.
     """
     if not search_term or not isinstance(search_term, str) or not entity_type:
         return []
@@ -533,6 +608,8 @@ def lookup_static_ids(search_term, entity_type, access_token):
         return list(cached) if isinstance(cached, list) else []
 
     index_data = get_index_data(entity_type, access_token)
+    if not index_data:
+        return []
     ids = _match_index_ids(index_data, search_term)
     search_cache[cache_key] = ids
     return ids
@@ -558,7 +635,9 @@ def lookup_journal_encounter_ids(search_term, access_token):
     found = search_blizzard(search_term, "journal-encounter", access_token)
     if found is not None:
         return [found]
-    return lookup_static_ids(search_term, "journal-encounter", access_token)
+    if last_error_was_auth:
+        return []
+    return lookup_static_ids(search_term, "journal-encounter", blizzard_token or access_token)
 
 
 def get_journal_encounter_data(encounter_id, access_token):

@@ -10,7 +10,7 @@
 #
 # A "tool" is a function the language model is allowed to request. The model
 # does not call Blizzard itself. It names a tool and arguments; Python runs it.
-from openai import OpenAI
+from openai import DefaultHttpxClient, OpenAI
 import json
 import re
 import time
@@ -23,6 +23,7 @@ from types import SimpleNamespace
 from src.config import (
     SYSTEM_PROMPT,
     LLM_MODEL,
+    LLM_REQUEST_TIMEOUT,
     CLIENT_ID,
     CLIENT_SECRET,
     print_missing_credentials_warning,
@@ -45,6 +46,10 @@ CONVERSATIONAL_PHRASES = (
     "that's helpful", "interesting", "wow"
 )
 
+# Cap on distinct tool calls executed in a single user turn.
+MAX_TOOL_CALLS_PER_TURN = 5
+
+
 def create_llm_client():
     """Build the one OpenAI client used by the chat loop.
 
@@ -58,20 +63,31 @@ def create_llm_client():
     key is missing, because the OpenAI constructor refuses an empty string.
     Startup validation still exits before chat if the active provider is
     incomplete.
+
+    Environment proxies (HTTP_PROXY / HTTPS_PROXY) are disabled on the model
+    HTTP client so local Ollama chats and custom HTTP bearer keys are never
+    forwarded to an untrusted proxy host.
     """
+    http_client = DefaultHttpxClient(trust_env=False, timeout=LLM_REQUEST_TIMEOUT)
     if app_config.LLM_PROVIDER == "gemini":
         return OpenAI(
             base_url=app_config.GEMINI_OPENAI_BASE_URL,
             api_key=app_config.GEMINI_API_KEY or "missing",
+            timeout=LLM_REQUEST_TIMEOUT,
+            http_client=http_client,
         )
     if app_config.LLM_PROVIDER == "custom":
         return OpenAI(
             base_url=app_config.LLM_BASE_URL or app_config.DEFAULT_OLLAMA_BASE_URL,
             api_key=app_config.LLM_API_KEY or "missing",
+            timeout=LLM_REQUEST_TIMEOUT,
+            http_client=http_client,
         )
     return OpenAI(
         base_url=app_config.LLM_BASE_URL or app_config.DEFAULT_OLLAMA_BASE_URL,
         api_key=app_config.OLLAMA_API_KEY,
+        timeout=LLM_REQUEST_TIMEOUT,
+        http_client=http_client,
     )
 
 
@@ -146,30 +162,59 @@ def parse_tool_calls(response_message):
     official list and must win if it is present.
 
     Fallback path: some local models write a JSON array into `content`
-    instead of filling tool_calls. This function scrapes those arrays and
-    builds ToolCall objects. Each fallback call gets a generated
+    instead of filling tool_calls. This function scrapes those arrays using
+    JSONDecoder (supporting multi-line formatting and brackets inside strings)
+    and builds ToolCall objects. Each fallback call gets a generated
     `call_<32 hex digits>` id because later history messages must link a
     result to a request. Without an id, the next model call can fail.
 
     Returns a list of ToolCall-like objects.
     Modifies response_message.content in place if tool calls are parsed from content.
     """
-    tool_calls = response_message.tool_calls or []
-    if not tool_calls and response_message.content:
-        # Fallback: parse tool calls from message content (for models that output tools in text)
-        json_matches = re.findall(r"\[.*?\]", response_message.content)
-        for match in json_matches:
+    if response_message is None:
+        return []
+    raw_tool_calls = getattr(response_message, "tool_calls", None)
+    tool_calls = list(raw_tool_calls) if isinstance(raw_tool_calls, (list, tuple)) and raw_tool_calls else []
+    content = getattr(response_message, "content", None)
+    if not tool_calls and isinstance(content, str) and content:
+        decoder = json.JSONDecoder()
+        spans_to_remove = []
+        idx = 0
+        while True:
+            start = content.find("[", idx)
+            if start == -1:
+                break
             try:
-                parsed = json.loads(match)
-                if isinstance(parsed, list) and parsed:
-                    for item in parsed:
-                        if isinstance(item, dict) and "name" in item and "arguments" in item:
-                            tool_calls.append(ToolCall(id=f"call_{uuid.uuid4().hex}", name=item["name"], arguments=json.dumps(item["arguments"])))
+                parsed, end = decoder.raw_decode(content, start)
             except Exception:
+                idx = start + 1
                 continue
-        # Remove the tool call JSON from the content
-        if tool_calls:
-            response_message.content = re.sub(r"\[.*?\]$", "", response_message.content).strip()
+            matched_calls = []
+            if isinstance(parsed, list) and parsed:
+                for item in parsed:
+                    if isinstance(item, dict) and "name" in item and "arguments" in item:
+                        matched_calls.append(
+                            ToolCall(
+                                id=f"call_{uuid.uuid4().hex}",
+                                name=item["name"],
+                                arguments=json.dumps(item["arguments"]),
+                            )
+                        )
+            if matched_calls:
+                tool_calls.extend(matched_calls)
+                spans_to_remove.append((start, end))
+                idx = end
+            else:
+                idx = start + 1
+
+        if spans_to_remove:
+            parts = []
+            cursor = 0
+            for start, end in spans_to_remove:
+                parts.append(content[cursor:start])
+                cursor = end
+            parts.append(content[cursor:])
+            response_message.content = "".join(parts).strip()
     return tool_calls
 
 
@@ -337,12 +382,86 @@ def _authenticate_blizzard():
     """
     print("Authenticating with Blizzard...")
     token, expires_in = get_access_token()
-    if token:
+    if (
+        isinstance(token, str)
+        and token.strip()
+        and not isinstance(expires_in, bool)
+        and isinstance(expires_in, (int, float))
+        and expires_in > 0
+    ):
         blizzard_api.blizzard_token = token
         blizzard_api.token_expiry = time.time() + expires_in
         print("Authentication successful!")
     else:
+        blizzard_api.blizzard_token = None
+        blizzard_api.token_expiry = 0
         print("Could not authenticate with Blizzard. API lookups will be unavailable.")
+
+
+def _extract_completion_message(completion):
+    """Return choices[0].message from a completion, or None if missing/empty."""
+    choices = getattr(completion, "choices", None)
+    if not isinstance(choices, (list, tuple)) or not choices:
+        return None
+    return getattr(choices[0], "message", None)
+
+
+def _message_text(message):
+    """Return string content from a completion message, or None."""
+    if message is None:
+        return None
+    content = getattr(message, "content", None)
+    if isinstance(content, str):
+        return content
+    return None
+
+
+_SCRATCH_CLAUSE_RE = re.compile(
+    r"^(?:let me\s+(?:look|check|search|find|see|call|use|query|consult)|first,\s*i|i got sidetracked|i got\b|i need to\b|i should\b|i'll try\b|i'm going to\b|to answer\b|it seems i\b)[^.!?\n]*[.!?]?\s*",
+    re.IGNORECASE,
+)
+
+
+def _clean_reasoning_prefix(response, *, is_conversational, used_tools):
+    """Strip a leading meta-reasoning scratch clause when no tool was called.
+
+    Conversational greetings ("Let me welcome you...", "Since the fire is warm...")
+    and grounded answers generated after tool calls ("I will share only the official
+    record...") are kept intact. If a non-conversational turn with no tool calls
+    consists solely of a scratchpad thought, return the in-character fallback.
+    """
+    if not response or not isinstance(response, str):
+        return response
+    if is_conversational or used_tools:
+        return response
+    match = _SCRATCH_CLAUSE_RE.match(response.strip())
+    if not match:
+        return response
+    remainder = response.strip()[match.end():].strip()
+    if remainder:
+        return remainder
+    return "I'm afraid the ancient scrolls are silent on that specific detail, friend. What other tale from Azeroth would you like to hear?"
+
+
+def _select_turn_tool_calls(tool_calls):
+    """Deduplicate identical valid tool calls and cap the count per turn."""
+    selected = []
+    seen_signatures = set()
+    for tc in tool_calls:
+        fn = getattr(tc, "function", None)
+        raw_name = getattr(fn, "name", None) if fn is not None else None
+        raw_args = getattr(fn, "arguments", None) if fn is not None else None
+        norm_name = raw_name if isinstance(raw_name, str) else str(raw_name)
+        parsed_args, norm_stored_args = _normalize_tool_arguments(raw_args)
+        if fn is not None and isinstance(raw_name, str) and isinstance(parsed_args, dict):
+            sig = (norm_name, norm_stored_args)
+            if sig in seen_signatures:
+                continue
+            seen_signatures.add(sig)
+        selected.append(tc)
+        if len(selected) >= MAX_TOOL_CALLS_PER_TURN:
+            break
+    return selected
 
 
 def run():
@@ -379,13 +498,17 @@ def run():
 
     # --- Main Chat Loop ---
     while True:
-        user_prompt = input("You: ")
+        try:
+            user_prompt = input("You: ")
+        except (EOFError, KeyboardInterrupt):
+            print("\nGoodbye! 👋")
+            break
 
         # Detect purely conversational messages that don't need a tool lookup
         is_conversational = is_conversational_prompt(user_prompt)
 
         # Check for quit before adding to history
-        if user_prompt.lower() == "quit":
+        if user_prompt.strip().lower() == "quit":
             print("Goodbye! 👋")
             break
 
@@ -399,16 +522,34 @@ def run():
             {"role": "system", "content": SYSTEM_PROMPT},
         ] + history
 
-        chat_completion = client.chat.completions.create(
-            messages=messages,
-            model=LLM_MODEL,
-            tools=TOOL_SCHEMAS,
-            tool_choice="none" if is_conversational else "required"
-        )
+        first_spinner = Spinner("Consulting the ancient scrolls...")
+        first_spinner.start()
+        try:
+            chat_completion = client.chat.completions.create(
+                messages=messages,
+                model=LLM_MODEL,
+                tools=TOOL_SCHEMAS,
+                tool_choice="none" if is_conversational else "required",
+                timeout=LLM_REQUEST_TIMEOUT,
+            )
+        except (EOFError, KeyboardInterrupt):
+            first_spinner.stop()
+            print("\nGoodbye! 👋")
+            break
+        except Exception as e:
+            first_spinner.stop()
+            print(f"Error communicating with AI provider: {e}")
+            response = "(no response)"
+            history.append({"role": "assistant", "content": response})
+            history = trim_history(history)
+            print(f"Loremaster: {response}")
+            print("-" * 30)
+            continue
+        finally:
+            first_spinner.stop()
 
-        response_message = chat_completion.choices[0].message
-
-        tool_calls = parse_tool_calls(response_message)
+        response_message = _extract_completion_message(chat_completion)
+        tool_calls = _select_turn_tool_calls(parse_tool_calls(response_message))
 
         # If the model wants to call a tool
         #
@@ -429,8 +570,11 @@ def run():
                 tool_results = []
 
                 for tool_call in tool_calls:
-                    function_name = tool_call.function.name
-                    function_args, stored_arguments = _normalize_tool_arguments(tool_call.function.arguments)
+                    fn = getattr(tool_call, "function", None)
+                    raw_name = getattr(fn, "name", None) if fn is not None else None
+                    raw_arguments = getattr(fn, "arguments", None) if fn is not None else None
+                    function_name = raw_name if isinstance(raw_name, str) else str(raw_name)
+                    function_args, stored_arguments = _normalize_tool_arguments(raw_arguments)
 
                     call_id = tool_call.id if getattr(tool_call, "id", None) else f"call_{uuid.uuid4().hex}"
                     assistant_tool_calls.append(
@@ -442,20 +586,19 @@ def run():
                         )
                     )
 
-                    if function_args is None or not isinstance(function_args, dict):
+                    if fn is None or function_args is None or not isinstance(function_args, dict):
                         tool_result = "Error parsing tool arguments."
-                    else:
+                    elif isinstance(raw_name, str) and raw_name in TOOL_HANDLERS:
                         access_token = ensure_valid_token()
-                        if function_name in TOOL_HANDLERS:
-                            # Isolate handler crashes so one bad tool does not
-                            # abort the rest of the turn.
-                            try:
-                                tool_result = TOOL_HANDLERS[function_name](function_args, access_token)
-                            except Exception as e:
-                                print(f"Error executing tool {function_name}: {e}")
-                                tool_result = f"Error executing tool: {function_name}"
-                        else:
-                            tool_result = f"Unknown tool: {function_name}"
+                        # Isolate handler crashes so one bad tool does not
+                        # abort the rest of the turn.
+                        try:
+                            tool_result = TOOL_HANDLERS[raw_name](function_args, access_token)
+                        except Exception as e:
+                            print(f"Error executing tool {function_name}: {e}")
+                            tool_result = f"Error executing tool: {function_name}"
+                    else:
+                        tool_result = f"Unknown tool: {function_name}"
 
                     tool_results.append({
                         "role": "tool",
@@ -475,33 +618,46 @@ def run():
 
                 # Second model call: the model now sees official tool data and
                 # must write the in-character answer from that data only.
-                final_completion = client.chat.completions.create(
-                    messages=[{"role": "system", "content": SYSTEM_PROMPT}] + history,
-                    model=LLM_MODEL
-                )
-                response = final_completion.choices[0].message.content
+                try:
+                    final_completion = client.chat.completions.create(
+                        messages=[{"role": "system", "content": SYSTEM_PROMPT}] + history,
+                        model=LLM_MODEL,
+                        timeout=LLM_REQUEST_TIMEOUT,
+                    )
+                    final_message = _extract_completion_message(final_completion)
+                    response = _message_text(final_message)
+                    if (not response or not response.strip()) and parse_tool_calls(final_message):
+                        response = (
+                            "I could not finish consulting the official records in a single pass, friend. "
+                            "Try asking about one specific detail at a time."
+                        )
+                except (EOFError, KeyboardInterrupt):
+                    print("\nGoodbye! 👋")
+                    break
+                except Exception as e:
+                    print(f"Error communicating with AI provider: {e}")
+                    response = "(no response)"
+            except (EOFError, KeyboardInterrupt):
+                print("\nGoodbye! 👋")
+                break
             finally:
                 spinner.stop()
         else:
-            response = response_message.content
+            response = _message_text(response_message)
 
-        # defensive guard in case final response is None/empty
-        if not response:
+        # defensive guard in case final response is None, non-string, or whitespace-only
+        if not response or not isinstance(response, str) or not response.strip():
             response = "(no response)"
 
-        # Local models sometimes "think out loud" before the real answer
-        # ("let me look that up..."). Those prefixes are replaced with a
-        # canned in-character line so the user does not see the scratch work.
-        REASONING_PREFIXES = (
-            "let me", "first,", "i got", "i need to", "i should", "i'll try",
-            "i will", "i'm going to", "to answer", "since the", "it seems i",
-            "i got sidetracked"
+        response = _clean_reasoning_prefix(
+            response,
+            is_conversational=is_conversational,
+            used_tools=bool(tool_calls),
         )
-        if response and any(response.lower().startswith(prefix) for prefix in REASONING_PREFIXES):
-            response = "I'm afraid the ancient scrolls are silent on that specific detail, friend. What other tale from Azeroth would you like to hear?"
 
         history.append({"role": "assistant", "content": response})
         history = trim_history(history)
 
         print(f"Loremaster: {response}")
         print("-" * 30)
+

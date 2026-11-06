@@ -162,7 +162,7 @@ def test_standard_tool_calls_not_overwritten_by_fallback():
 
 
 def test_blank_assistant_reply_does_not_split_chat_session():
-    """A whitespace-only reply must not end a turn and orphan the tool result."""
+    """A whitespace-only reply must not end a turn and orphan the tool result or drop an earlier turn."""
     history = [
         {"role": "user", "content": "older question"},
         {"role": "assistant", "content": "older answer"},
@@ -177,6 +177,19 @@ def test_blank_assistant_reply_does_not_split_chat_session():
     assert trimmed[0]["content"] == "Thunderfury"
     assert trimmed[-2]["role"] == "tool"
     assert trimmed[-1]["content"] == "The records name Thunderfury."
+
+    # A whitespace-only assistant message in the middle of three user questions
+    # must NOT count as a completed turn that pushes "u1" out when max_turns=2.
+    three_turn_history = [
+        {"role": "user", "content": "u1"},
+        {"role": "assistant", "content": "a1"},
+        {"role": "user", "content": "u2"},
+        {"role": "assistant", "content": "   "},
+        {"role": "user", "content": "u3"},
+        {"role": "assistant", "content": "a3"},
+    ]
+    trimmed_two = src.bot.trim_history(three_turn_history, max_turns=2)
+    assert trimmed_two[0]["content"] == "u1"
 
 
 # ============================================================================

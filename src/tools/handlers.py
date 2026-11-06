@@ -8,6 +8,7 @@ user-facing answer from it.
 TOOL_HANDLERS is the dispatcher: tool name → function. The chat loop looks
 up the name and calls the function with (arguments_dict, access_token).
 """
+import src.api.blizzard as blizzard_api
 from src.api.blizzard import (
     find_reputation_tiers,
     get_achievement_data,
@@ -44,6 +45,76 @@ from src.api.blizzard import (
 )
 
 
+# Maximum length of a serialized tool result sent back to the model.
+MAX_TOOL_RESULT_CHARS = 8000
+
+_PRIORITY_DOCUMENT_KEYS = (
+    "id",
+    "name",
+    "description",
+    "faction",
+    "playable_class",
+    "instance",
+    "type",
+    "family",
+    "quality",
+    "level",
+    "required_level",
+    "item_class",
+    "item_subclass",
+    "skill_tiers",
+    "tiers",
+    "standings",
+    "standard_standings",
+    "other_reputation_systems",
+    "official_media",
+    "official_group_kind",
+    "official_skill_tier",
+)
+
+
+def _summarize_large_payload(value, depth=0):
+    """Compact an oversized Blizzard document while keeping id, name, and key fields."""
+    if depth > 3:
+        text = str(value)
+        return text[:120] + "..." if len(text) > 120 else value
+    if isinstance(value, str):
+        return value[:200] + "..." if len(value) > 200 else value
+    if isinstance(value, list):
+        items = [_summarize_large_payload(item, depth + 1) for item in value[:10]]
+        if len(value) > 10:
+            items.append(f"... ({len(value) - 10} more entries omitted)")
+        return items
+    if isinstance(value, dict):
+        summary = {}
+        for key in _PRIORITY_DOCUMENT_KEYS:
+            if key in value:
+                summary[key] = _summarize_large_payload(value[key], depth + 1)
+        extra_count = 0
+        for key, item_val in value.items():
+            if key in summary or key in ("_links", "key", "href"):
+                continue
+            if extra_count >= 6:
+                break
+            summary[key] = _summarize_large_payload(item_val, depth + 1)
+            extra_count += 1
+        return summary
+    return value
+
+
+def _cap_tool_result(prefix, payload, max_chars=MAX_TOOL_RESULT_CHARS):
+    """Format prefix + payload and cap the result at max_chars when oversized."""
+    full_text = f"{prefix}{payload}"
+    if len(full_text) <= max_chars:
+        return full_text
+    compacted = _summarize_large_payload(payload)
+    summary_text = f"{prefix}{compacted}"
+    if len(summary_text) <= max_chars:
+        return summary_text
+    suffix = "... [truncated]"
+    return summary_text[: max_chars - len(suffix)] + suffix
+
+
 # Shared ending of the not-found message. The wording is strict on purpose:
 # a small local model will invent lore unless the tool result forbids it.
 _NOT_FOUND_SUFFIX = (
@@ -65,6 +136,21 @@ def _unavailable(noun):
     return f"The Blizzard API is currently unavailable, so I cannot look up {noun} information."
 
 
+def _auth_failed(noun):
+    """Tell the model Blizzard returned HTTP 401 rather than claiming the entity does not exist."""
+    return (
+        f"Blizzard API authentication failed (HTTP 401 Unauthorized), so I cannot look up "
+        f"{noun} information right now. The Blizzard API is currently unavailable."
+    )
+
+
+def _not_found_or_auth_failed(term, noun, *, as_item_id=False):
+    """Return an auth-failure string when the lookup failed with 401, else not-found."""
+    if getattr(blizzard_api, "last_error_was_auth", False):
+        return _auth_failed(noun)
+    return _not_found(term, as_item_id=as_item_id)
+
+
 def _search_and_fetch(function_args, access_token, entity_type, fetch_fn, result_label, noun):
     """Shared path for name search → ID fetch → success or not-found text.
 
@@ -74,12 +160,15 @@ def _search_and_fetch(function_args, access_token, entity_type, fetch_fn, result
     """
     if not access_token:
         return _unavailable(noun)
-    search_term = function_args.get("search_term")
+    blizzard_api.last_error_was_auth = False
+    search_term = function_args.get("search_term") if isinstance(function_args, dict) else None
     entity_id = search_blizzard(search_term, entity_type, access_token)
     if not entity_id:
-        return _not_found(search_term)
-    data = fetch_fn(entity_id, access_token)
-    return f"{result_label} data received: {data}" if data else _not_found(search_term)
+        return _not_found_or_auth_failed(search_term, noun)
+    data = fetch_fn(entity_id, blizzard_api.blizzard_token or access_token)
+    if not data:
+        return _not_found_or_auth_failed(search_term, noun)
+    return _cap_tool_result(f"{result_label} data received: ", data)
 
 
 def handle_search_creature(function_args, access_token):
@@ -94,13 +183,16 @@ def handle_lookup_item(function_args, access_token):
     """
     if not access_token:
         return _unavailable("item")
+    blizzard_api.last_error_was_auth = False
     if not isinstance(function_args, dict):
         return _not_found("None", as_item_id=True)
     item_id = function_args.get("item_id")
     if item_id is None or not str(item_id).strip() or not str(item_id).strip().isdigit():
         return _not_found(item_id, as_item_id=True)
     item_data = get_item_data(item_id, access_token)
-    return f"Item data received: {item_data}" if item_data else _not_found(item_id, as_item_id=True)
+    if not item_data:
+        return _not_found_or_auth_failed(item_id, "item", as_item_id=True)
+    return _cap_tool_result("Item data received: ", item_data)
 
 
 def handle_search_item_by_name(function_args, access_token):
@@ -166,10 +258,10 @@ def _empty_search_term(function_args):
 
 
 def _format_payloads(result_label, payloads):
-    """Turn one or more official documents into a single tool-result string."""
+    """Turn one or more official documents into a single capped tool-result string."""
     if len(payloads) == 1:
-        return f"{result_label} data received: {payloads[0]}"
-    return f"{result_label} data received ({len(payloads)} matches): {payloads}"
+        return _cap_tool_result(f"{result_label} data received: ", payloads[0])
+    return _cap_tool_result(f"{result_label} data received ({len(payloads)} matches): ", payloads)
 
 
 def _index_search_and_fetch(
@@ -192,6 +284,7 @@ def _index_search_and_fetch(
     """
     if not access_token:
         return _unavailable(noun)
+    blizzard_api.last_error_was_auth = False
     if not isinstance(function_args, dict):
         return _not_found("None")
     search_term = _empty_search_term(function_args)
@@ -201,8 +294,8 @@ def _index_search_and_fetch(
     if overview_terms and search_term.strip().lower() in overview_terms:
         names = list_index_names(entity_type, access_token)
         if not names:
-            return _not_found(search_term)
-        return f"{result_label} index received: {names}"
+            return _not_found_or_auth_failed(search_term, noun)
+        return _cap_tool_result(f"{result_label} index received: ", names)
 
     resolver = resolve_ids or lookup_static_ids
     if resolver is lookup_static_ids:
@@ -210,18 +303,18 @@ def _index_search_and_fetch(
     else:
         entity_ids = resolver(search_term, access_token)
     if not entity_ids:
-        return _not_found(search_term)
+        return _not_found_or_auth_failed(search_term, noun)
 
     payloads = []
     for entity_id in entity_ids:
-        data = fetch_fn(entity_id, access_token)
+        data = fetch_fn(entity_id, blizzard_api.blizzard_token or access_token)
         if not data:
             continue
         if media_type:
-            data = with_official_media(data, media_type, entity_id, access_token)
+            data = with_official_media(data, media_type, entity_id, blizzard_api.blizzard_token or access_token)
         payloads.append(data)
     if not payloads:
-        return _not_found(search_term)
+        return _not_found_or_auth_failed(search_term, noun)
     return _format_payloads(result_label, payloads)
 
 
@@ -291,6 +384,7 @@ def handle_search_profession(function_args, access_token):
     """Look up a profession and attach media plus a matching skill-tier if named."""
     if not access_token:
         return _unavailable("profession")
+    blizzard_api.last_error_was_auth = False
     if not isinstance(function_args, dict):
         return _not_found("None")
     search_term = _empty_search_term(function_args)
@@ -299,26 +393,27 @@ def handle_search_profession(function_args, access_token):
     if search_term.strip().lower() in {"profession", "professions"}:
         names = list_index_names("profession", access_token)
         if not names:
-            return _not_found(search_term)
-        return f"Profession index received: {names}"
+            return _not_found_or_auth_failed(search_term, "profession")
+        return _cap_tool_result("Profession index received: ", names)
 
     profession_ids = lookup_static_ids(search_term, "profession", access_token)
     if not profession_ids:
-        return _not_found(search_term)
+        return _not_found_or_auth_failed(search_term, "profession")
 
     payloads = []
     for profession_id in profession_ids:
-        data = get_profession_data(profession_id, access_token)
+        current_token = blizzard_api.blizzard_token or access_token
+        data = get_profession_data(profession_id, current_token)
         if not data:
             continue
-        data = with_official_media(data, "profession", profession_id, access_token)
-        skill_tier = maybe_matching_skill_tier(data, search_term, access_token)
+        data = with_official_media(data, "profession", profession_id, blizzard_api.blizzard_token or current_token)
+        skill_tier = maybe_matching_skill_tier(data, search_term, blizzard_api.blizzard_token or current_token)
         if skill_tier:
             data = dict(data)
             data["official_skill_tier"] = skill_tier
         payloads.append(data)
     if not payloads:
-        return _not_found(search_term)
+        return _not_found_or_auth_failed(search_term, "profession")
     return _format_payloads("Profession", payloads)
 
 
@@ -336,6 +431,7 @@ def handle_search_item_set(function_args, access_token):
 def handle_search_reputation_tiers(function_args, access_token):
     if not access_token:
         return _unavailable("reputation tiers")
+    blizzard_api.last_error_was_auth = False
     if not isinstance(function_args, dict):
         return _not_found("None")
     search_term = _empty_search_term(function_args)
@@ -343,14 +439,15 @@ def handle_search_reputation_tiers(function_args, access_token):
         return _not_found(function_args.get("search_term"))
     data = find_reputation_tiers(search_term, access_token)
     if not data:
-        return _not_found(search_term)
-    return f"Reputation tiers data received: {data}"
+        return _not_found_or_auth_failed(search_term, "reputation tiers")
+    return _cap_tool_result("Reputation tiers data received: ", data)
 
 
 def handle_search_creature_family(function_args, access_token):
     """Resolve a creature family or creature type from the official indexes."""
     if not access_token:
         return _unavailable("creature family")
+    blizzard_api.last_error_was_auth = False
     if not isinstance(function_args, dict):
         return _not_found("None")
     search_term = _empty_search_term(function_args)
@@ -362,24 +459,33 @@ def handle_search_creature_family(function_args, access_token):
     type_overview = {"creature type", "creature types", "types"}
     if query in family_overview:
         names = list_index_names("creature-family", access_token)
-        return f"Creature family index received: {names}" if names else _not_found(search_term)
+        return (
+            _cap_tool_result("Creature family index received: ", names)
+            if names
+            else _not_found_or_auth_failed(search_term, "creature family")
+        )
     if query in type_overview:
         names = list_index_names("creature-type", access_token)
-        return f"Creature type index received: {names}" if names else _not_found(search_term)
+        return (
+            _cap_tool_result("Creature type index received: ", names)
+            if names
+            else _not_found_or_auth_failed(search_term, "creature type")
+        )
 
     payloads = []
     family_ids = lookup_static_ids(search_term, "creature-family", access_token)
     for family_id in family_ids:
-        data = get_creature_family_data(family_id, access_token)
+        current_token = blizzard_api.blizzard_token or access_token
+        data = get_creature_family_data(family_id, current_token)
         if data:
-            payloads.append(with_official_media(data, "creature-family", family_id, access_token))
-    type_ids = lookup_static_ids(search_term, "creature-type", access_token)
+            payloads.append(with_official_media(data, "creature-family", family_id, blizzard_api.blizzard_token or current_token))
+    type_ids = lookup_static_ids(search_term, "creature-type", blizzard_api.blizzard_token or access_token)
     for type_id in type_ids:
-        data = get_creature_type_data(type_id, access_token)
+        data = get_creature_type_data(type_id, blizzard_api.blizzard_token or access_token)
         if data:
             payloads.append(data)
     if not payloads:
-        return _not_found(search_term)
+        return _not_found_or_auth_failed(search_term, "creature family")
     return _format_payloads("Creature family or type", payloads)
 
 
@@ -387,6 +493,7 @@ def handle_search_quest_group(function_args, access_token):
     """Resolve a quest area, category, or type from the official indexes."""
     if not access_token:
         return _unavailable("quest group")
+    blizzard_api.last_error_was_auth = False
     if not isinstance(function_args, dict):
         return _not_found("None")
     search_term = _empty_search_term(function_args)
@@ -405,7 +512,11 @@ def handle_search_quest_group(function_args, access_token):
     if query in overview_map:
         entity_type, label = overview_map[query]
         names = list_index_names(entity_type, access_token)
-        return f"{label} index received: {names}" if names else _not_found(search_term)
+        return (
+            _cap_tool_result(f"{label} index received: ", names)
+            if names
+            else _not_found_or_auth_failed(search_term, "quest group")
+        )
 
     lookups = (
         ("quest/area", get_quest_area_data, "Quest area"),
@@ -415,26 +526,27 @@ def handle_search_quest_group(function_args, access_token):
     payloads = []
     labels = []
     for entity_type, fetch_fn, label in lookups:
-        for entity_id in lookup_static_ids(search_term, entity_type, access_token):
-            data = fetch_fn(entity_id, access_token)
+        for entity_id in lookup_static_ids(search_term, entity_type, blizzard_api.blizzard_token or access_token):
+            data = fetch_fn(entity_id, blizzard_api.blizzard_token or access_token)
             if data:
                 payloads.append(data)
                 labels.append(label)
     if not payloads:
-        return _not_found(search_term)
+        return _not_found_or_auth_failed(search_term, "quest group")
     if len(payloads) == 1:
-        return f"{labels[0]} data received: {payloads[0]}"
+        return _cap_tool_result(f"{labels[0]} data received: ", payloads[0])
     labeled = [
         {**payload, "official_group_kind": label} if isinstance(payload, dict) else payload
         for payload, label in zip(payloads, labels)
     ]
-    return f"Quest group data received ({len(payloads)} matches): {labeled}"
+    return _cap_tool_result(f"Quest group data received ({len(payloads)} matches): ", labeled)
 
 
 def handle_get_wow_token_price(function_args, access_token):
     """Return the current token price in gold, or a short failure string."""
     if not access_token:
         return "The Blizzard API is currently unavailable, so I cannot look up the WoW Token price."
+    blizzard_api.last_error_was_auth = False
     token_data = get_wow_token_price(access_token)
     if token_data and "price" in token_data:
         return f"WoW Token price received: Current price is {token_data['price']:,} gold."

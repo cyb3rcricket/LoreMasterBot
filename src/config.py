@@ -9,10 +9,37 @@ import sys
 from dotenv import load_dotenv
 
 
+def _env_text(name, default=""):
+    """Read one environment value and strip surrounding whitespace.
+
+    Empty or missing values become `default`. Whitespace-only values are
+    treated as missing so a blank line in `.env` does not count as a key.
+    """
+    value = os.getenv(name)
+    if value is None:
+        return default
+    return value.strip()
+
+
 # Environment variables are named settings stored outside the program, usually
 # in a `.env` file or the operating system. That keeps secret keys out of the
 # source code, so they are not committed to git by accident.
 #
+# Treat blank or whitespace-only environment variables as unset before loading
+# `.env` so an empty shell export (e.g. BLIZZARD_CLIENT_ID="") does not hide
+# a real value written in `.env`.
+for _env_key in (
+    "BLIZZARD_CLIENT_ID",
+    "BLIZZARD_CLIENT_SECRET",
+    "LLM_PROVIDER",
+    "LLM_MODEL",
+    "LLM_BASE_URL",
+    "LLM_API_KEY",
+    "GEMINI_API_KEY",
+):
+    if _env_key in os.environ and not os.environ[_env_key].strip():
+        del os.environ[_env_key]
+
 # load_dotenv() looks for a `.env` file and copies its values into os.environ
 # if those names are not already set. os.getenv(...) then reads one name.
 load_dotenv()
@@ -20,8 +47,8 @@ load_dotenv()
 # Get Blizzard credentials from .env (create a .env file in the same folder).
 # These are separate from LLM credentials. Blizzard unlocks Game Data API
 # lookups; the LLM provider is who writes the spoken replies.
-CLIENT_ID = os.getenv("BLIZZARD_CLIENT_ID")
-CLIENT_SECRET = os.getenv("BLIZZARD_CLIENT_SECRET")
+CLIENT_ID = _env_text("BLIZZARD_CLIENT_ID")
+CLIENT_SECRET = _env_text("BLIZZARD_CLIENT_SECRET")
 
 # A "provider" is the service that runs the language model. Several providers
 # accept the same OpenAI Chat Completions format, so one OpenAI Python client
@@ -46,17 +73,9 @@ GEMINI_OPENAI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/opena
 # Ollama ignores the API key, but the OpenAI client constructor requires one.
 OLLAMA_API_KEY = "ollama"
 
-
-def _env_text(name, default=""):
-    """Read one environment value and strip surrounding whitespace.
-
-    Empty or missing values become `default`. Whitespace-only values are
-    treated as missing so a blank line in `.env` does not count as a key.
-    """
-    value = os.getenv(name)
-    if value is None:
-        return default
-    return value.strip()
+# Per-request timeout (seconds) for LLM chat completions so a stalled provider
+# cannot block the CLI for the OpenAI SDK's 600-second default.
+LLM_REQUEST_TIMEOUT = 30.0
 
 
 # Default provider is local Ollama so an existing `.env` that only has
