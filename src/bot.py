@@ -464,6 +464,174 @@ def _select_turn_tool_calls(tool_calls):
     return selected
 
 
+def initialize_bot():
+    """Validate LLM provider, check Blizzard credentials, and authenticate.
+
+    Exits with code 1 and a clear message if configuration is incomplete.
+    """
+    validate_llm_provider()
+
+    if not CLIENT_ID or not CLIENT_SECRET:
+        print_missing_credentials_warning()
+        sys.exit(1)
+
+    _authenticate_blizzard()
+
+
+def process_user_turn(user_prompt, conversation_history=None, use_spinner=True):
+    """Execute one full user turn using the passed-in history list.
+
+    Returns (response, updated_history) to match the salvage web UI contract.
+    """
+    active_history = [] if conversation_history is None else list(conversation_history)
+
+    # Detect purely conversational messages that don't need a tool lookup
+    is_conversational = is_conversational_prompt(user_prompt)
+
+    active_history.append({"role": "user", "content": user_prompt})
+    active_history = trim_history(active_history)
+
+    # First model call. tool_choice="none" forbids tools on greetings.
+    # tool_choice="required" forces a tool on everything else so a small
+    # local model cannot answer a named entity from training memory.
+    messages = [
+        {"role": "system", "content": SYSTEM_PROMPT},
+    ] + active_history
+
+    first_spinner = Spinner("Consulting the ancient scrolls...") if use_spinner else None
+    if first_spinner:
+        first_spinner.start()
+    try:
+        chat_completion = client.chat.completions.create(
+            messages=messages,
+            model=LLM_MODEL,
+            tools=TOOL_SCHEMAS,
+            tool_choice="none" if is_conversational else "required",
+            timeout=LLM_REQUEST_TIMEOUT,
+        )
+    except (EOFError, KeyboardInterrupt):
+        raise
+    except Exception as e:
+        print(f"Error communicating with AI provider: {e}")
+        response = "(no response)"
+        active_history.append({"role": "assistant", "content": response})
+        active_history = trim_history(active_history)
+        return response, active_history
+    finally:
+        if first_spinner:
+            first_spinner.stop()
+
+    response_message = _extract_completion_message(chat_completion)
+    tool_calls = _select_turn_tool_calls(parse_tool_calls(response_message))
+
+    # If the model wants to call a tool
+    #
+    # Multi-tool protocol shape (must stay in this order):
+    #   user message
+    #   → one assistant message listing tool A and tool B
+    #   → tool result A (tool_call_id matches A)
+    #   → tool result B (tool_call_id matches B)
+    #   → assistant final spoken response
+    #
+    # Older code appended one assistant message per tool. That broke the
+    # Chat Completions tool protocol and is covered by P1 tests.
+    if tool_calls:
+        spinner = Spinner("Fetching lore from Azeroth...") if use_spinner else None
+        if spinner:
+            spinner.start()
+        try:
+            assistant_tool_calls = []
+            tool_results = []
+
+            for tool_call in tool_calls:
+                fn = getattr(tool_call, "function", None)
+                raw_name = getattr(fn, "name", None) if fn is not None else None
+                raw_arguments = getattr(fn, "arguments", None) if fn is not None else None
+                function_name = raw_name if isinstance(raw_name, str) else str(raw_name)
+                function_args, stored_arguments = _normalize_tool_arguments(raw_arguments)
+
+                call_id = tool_call.id if getattr(tool_call, "id", None) else f"call_{uuid.uuid4().hex}"
+                assistant_tool_calls.append(
+                    _history_tool_call_entry(
+                        tool_call,
+                        call_id,
+                        function_name,
+                        stored_arguments,
+                    )
+                )
+
+                if fn is None or function_args is None or not isinstance(function_args, dict):
+                    tool_result = "Error parsing tool arguments."
+                elif isinstance(raw_name, str) and raw_name in TOOL_HANDLERS:
+                    access_token = ensure_valid_token()
+                    # Isolate handler crashes so one bad tool does not
+                    # abort the rest of the turn.
+                    try:
+                        tool_result = TOOL_HANDLERS[raw_name](function_args, access_token)
+                    except Exception as e:
+                        print(f"Error executing tool {function_name}: {e}")
+                        tool_result = f"Error executing tool: {function_name}"
+                else:
+                    tool_result = f"Unknown tool: {function_name}"
+
+                tool_results.append({
+                    "role": "tool",
+                    "content": tool_result,
+                    "tool_call_id": call_id
+                })
+
+            # Append one assistant history entry containing all tool calls
+            active_history.append({
+                "role": "assistant",
+                "content": None,
+                "tool_calls": assistant_tool_calls
+            })
+            # Append one tool-result entry per call
+            for result_entry in tool_results:
+                active_history.append(result_entry)
+
+            # Second model call: the model now sees official tool data and
+            # must write the in-character answer from that data only.
+            try:
+                final_completion = client.chat.completions.create(
+                    messages=[{"role": "system", "content": SYSTEM_PROMPT}] + active_history,
+                    model=LLM_MODEL,
+                    timeout=LLM_REQUEST_TIMEOUT,
+                )
+                final_message = _extract_completion_message(final_completion)
+                response = _message_text(final_message)
+                if (not response or not response.strip()) and parse_tool_calls(final_message):
+                    response = (
+                        "I could not finish consulting the official records in a single pass, friend. "
+                        "Try asking about one specific detail at a time."
+                    )
+            except (EOFError, KeyboardInterrupt):
+                raise
+            except Exception as e:
+                print(f"Error communicating with AI provider: {e}")
+                response = "(no response)"
+        finally:
+            if spinner:
+                spinner.stop()
+    else:
+        response = _message_text(response_message)
+
+    # defensive guard in case final response is None, non-string, or whitespace-only
+    if not response or not isinstance(response, str) or not response.strip():
+        response = "(no response)"
+
+    response = _clean_reasoning_prefix(
+        response,
+        is_conversational=is_conversational,
+        used_tools=bool(tool_calls),
+    )
+
+    active_history.append({"role": "assistant", "content": response})
+    active_history = trim_history(active_history)
+
+    return response, active_history
+
+
 def run():
     """Start the interactive chat loop.
 
@@ -475,13 +643,7 @@ def run():
     """
     global history
 
-    validate_llm_provider()
-
-    if not CLIENT_ID or not CLIENT_SECRET:
-        print_missing_credentials_warning()
-        sys.exit(1)
-
-    _authenticate_blizzard()
+    initialize_bot()
 
     # --- Updated Welcome Message ---
     print("\n🤖 Hello! I'm your Loremaster's Companion. (Type 'quit' to exit)")
@@ -504,159 +666,20 @@ def run():
             print("\nGoodbye! 👋")
             break
 
-        # Detect purely conversational messages that don't need a tool lookup
-        is_conversational = is_conversational_prompt(user_prompt)
-
         # Check for quit before adding to history
         if user_prompt.strip().lower() == "quit":
             print("Goodbye! 👋")
             break
 
-        history.append({"role": "user", "content": user_prompt})
-        history = trim_history(history)
-
-        # First model call. tool_choice="none" forbids tools on greetings.
-        # tool_choice="required" forces a tool on everything else so a small
-        # local model cannot answer a named entity from training memory.
-        messages = [
-            {"role": "system", "content": SYSTEM_PROMPT},
-        ] + history
-
-        first_spinner = Spinner("Consulting the ancient scrolls...")
-        first_spinner.start()
         try:
-            chat_completion = client.chat.completions.create(
-                messages=messages,
-                model=LLM_MODEL,
-                tools=TOOL_SCHEMAS,
-                tool_choice="none" if is_conversational else "required",
-                timeout=LLM_REQUEST_TIMEOUT,
+            response, history = process_user_turn(
+                user_prompt,
+                conversation_history=history,
+                use_spinner=True,
             )
         except (EOFError, KeyboardInterrupt):
-            first_spinner.stop()
             print("\nGoodbye! 👋")
             break
-        except Exception as e:
-            first_spinner.stop()
-            print(f"Error communicating with AI provider: {e}")
-            response = "(no response)"
-            history.append({"role": "assistant", "content": response})
-            history = trim_history(history)
-            print(f"Loremaster: {response}")
-            print("-" * 30)
-            continue
-        finally:
-            first_spinner.stop()
-
-        response_message = _extract_completion_message(chat_completion)
-        tool_calls = _select_turn_tool_calls(parse_tool_calls(response_message))
-
-        # If the model wants to call a tool
-        #
-        # Multi-tool protocol shape (must stay in this order):
-        #   user message
-        #   → one assistant message listing tool A and tool B
-        #   → tool result A (tool_call_id matches A)
-        #   → tool result B (tool_call_id matches B)
-        #   → assistant final spoken response
-        #
-        # Older code appended one assistant message per tool. That broke the
-        # Chat Completions tool protocol and is covered by P1 tests.
-        if tool_calls:
-            spinner = Spinner("Fetching lore from Azeroth...")
-            spinner.start()
-            try:
-                assistant_tool_calls = []
-                tool_results = []
-
-                for tool_call in tool_calls:
-                    fn = getattr(tool_call, "function", None)
-                    raw_name = getattr(fn, "name", None) if fn is not None else None
-                    raw_arguments = getattr(fn, "arguments", None) if fn is not None else None
-                    function_name = raw_name if isinstance(raw_name, str) else str(raw_name)
-                    function_args, stored_arguments = _normalize_tool_arguments(raw_arguments)
-
-                    call_id = tool_call.id if getattr(tool_call, "id", None) else f"call_{uuid.uuid4().hex}"
-                    assistant_tool_calls.append(
-                        _history_tool_call_entry(
-                            tool_call,
-                            call_id,
-                            function_name,
-                            stored_arguments,
-                        )
-                    )
-
-                    if fn is None or function_args is None or not isinstance(function_args, dict):
-                        tool_result = "Error parsing tool arguments."
-                    elif isinstance(raw_name, str) and raw_name in TOOL_HANDLERS:
-                        access_token = ensure_valid_token()
-                        # Isolate handler crashes so one bad tool does not
-                        # abort the rest of the turn.
-                        try:
-                            tool_result = TOOL_HANDLERS[raw_name](function_args, access_token)
-                        except Exception as e:
-                            print(f"Error executing tool {function_name}: {e}")
-                            tool_result = f"Error executing tool: {function_name}"
-                    else:
-                        tool_result = f"Unknown tool: {function_name}"
-
-                    tool_results.append({
-                        "role": "tool",
-                        "content": tool_result,
-                        "tool_call_id": call_id
-                    })
-
-                # Append one assistant history entry containing all tool calls
-                history.append({
-                    "role": "assistant",
-                    "content": None,
-                    "tool_calls": assistant_tool_calls
-                })
-                # Append one tool-result entry per call
-                for result_entry in tool_results:
-                    history.append(result_entry)
-
-                # Second model call: the model now sees official tool data and
-                # must write the in-character answer from that data only.
-                try:
-                    final_completion = client.chat.completions.create(
-                        messages=[{"role": "system", "content": SYSTEM_PROMPT}] + history,
-                        model=LLM_MODEL,
-                        timeout=LLM_REQUEST_TIMEOUT,
-                    )
-                    final_message = _extract_completion_message(final_completion)
-                    response = _message_text(final_message)
-                    if (not response or not response.strip()) and parse_tool_calls(final_message):
-                        response = (
-                            "I could not finish consulting the official records in a single pass, friend. "
-                            "Try asking about one specific detail at a time."
-                        )
-                except (EOFError, KeyboardInterrupt):
-                    print("\nGoodbye! 👋")
-                    break
-                except Exception as e:
-                    print(f"Error communicating with AI provider: {e}")
-                    response = "(no response)"
-            except (EOFError, KeyboardInterrupt):
-                print("\nGoodbye! 👋")
-                break
-            finally:
-                spinner.stop()
-        else:
-            response = _message_text(response_message)
-
-        # defensive guard in case final response is None, non-string, or whitespace-only
-        if not response or not isinstance(response, str) or not response.strip():
-            response = "(no response)"
-
-        response = _clean_reasoning_prefix(
-            response,
-            is_conversational=is_conversational,
-            used_tools=bool(tool_calls),
-        )
-
-        history.append({"role": "assistant", "content": response})
-        history = trim_history(history)
 
         print(f"Loremaster: {response}")
         print("-" * 30)
