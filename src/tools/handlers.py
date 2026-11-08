@@ -561,6 +561,27 @@ _ENTITY_RESOLVER = {
         "result_label": "Room",
         "noun": "room",
     },
+    "achievement-category": {
+        "mode": "index",
+        "entity_type": "achievement-category",
+        "detail_fetch": blizzard_api._get_entity_data,
+        "result_label": "Achievement category",
+        "noun": "achievement category",
+    },
+    "item-class": {
+        "mode": "index",
+        "entity_type": "item-class",
+        "detail_fetch": blizzard_api._get_entity_data,
+        "result_label": "Item class",
+        "noun": "item class",
+    },
+    "item-appearance-set": {
+        "mode": "index",
+        "entity_type": "item-appearance/set",
+        "detail_fetch": blizzard_api._get_entity_data,
+        "result_label": "Item appearance set",
+        "noun": "item appearance set",
+    },
 }
 
 
@@ -605,6 +626,21 @@ def handle_search_room(function_args, access_token):
     return _resolve_entity("room", function_args, access_token)
 
 
+def handle_search_achievement_category(function_args, access_token):
+    """Look up an achievement category by name through the entity resolver."""
+    return _resolve_entity("achievement-category", function_args, access_token)
+
+
+def handle_search_item_class(function_args, access_token):
+    """Look up an item class by name through the entity resolver."""
+    return _resolve_entity("item-class", function_args, access_token)
+
+
+def handle_search_item_appearance_set(function_args, access_token):
+    """Look up an item appearance set by name through the entity resolver."""
+    return _resolve_entity("item-appearance-set", function_args, access_token)
+
+
 def handle_get_wow_token_price(function_args, access_token):
     """Return the current token price in gold, or a short failure string."""
     if not access_token:
@@ -645,4 +681,7 @@ TOOL_HANDLERS = {
     "get_wow_token_price": handle_get_wow_token_price,
     "search_decor": handle_search_decor,
     "search_room": handle_search_room,
+    "search_achievement_category": handle_search_achievement_category,
+    "search_item_class": handle_search_item_class,
+    "search_item_appearance_set": handle_search_item_appearance_set,
 }

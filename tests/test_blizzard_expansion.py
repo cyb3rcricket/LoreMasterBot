@@ -1050,3 +1050,267 @@ def test_search_room_http_401_returns_auth_failure_and_never_calls_decor(monkeyp
     assert result == handlers._auth_failed("room")
     assert "NO OFFICIAL DATA FOUND" not in result
     _assert_urls_exclude(mock_get, "/decor")
+
+
+# ============================================================================
+# Job 2 resolver tools — index mode
+# ============================================================================
+
+_PRE_JOB2_TOOL_NAMES = (
+    "search_creature",
+    "lookup_item",
+    "search_item_by_name",
+    "search_quest_by_name",
+    "search_mount_by_name",
+    "search_achievement_by_name",
+    "search_spell_by_name",
+    "search_journal_instance_by_name",
+    "search_faction_by_name",
+    "search_title_by_name",
+    "search_toy_by_name",
+    "search_pet_by_name",
+    "search_heirloom_by_name",
+    "search_journal_encounter",
+    "search_journal_expansion",
+    "search_playable_race",
+    "search_playable_class",
+    "search_specialization",
+    "search_profession",
+    "search_item_set",
+    "search_reputation_tiers",
+    "search_creature_family",
+    "search_quest_group",
+    "get_wow_token_price",
+)
+
+_JOB2_TOOL_NAMES = (
+    "search_decor",
+    "search_room",
+    "search_achievement_category",
+    "search_item_class",
+    "search_item_appearance_set",
+)
+
+
+def test_job2_tool_names_are_the_only_additions():
+    """Schema and handler name sets match, and Job 2 names are the only additions."""
+    schema_names = [item["function"]["name"] for item in TOOL_SCHEMAS]
+    assert set(schema_names) == set(TOOL_HANDLERS)
+    assert len(schema_names) == len(set(schema_names))
+    assert set(schema_names) - set(_PRE_JOB2_TOOL_NAMES) == set(_JOB2_TOOL_NAMES)
+    assert set(_PRE_JOB2_TOOL_NAMES) <= set(schema_names)
+
+
+def _index_then_detail(monkeypatch, handler, search_term, index_path, detail_suffix, index_body, detail_body):
+    blizzard.blizzard_token = None
+    mock_get = MagicMock(side_effect=[
+        _json_response(index_body),
+        _json_response(detail_body),
+    ])
+    monkeypatch.setattr("requests.get", mock_get)
+    result = handler({"search_term": search_term}, "token")
+    assert mock_get.call_args_list[0].args[0].endswith(index_path)
+    assert mock_get.call_args_list[1].args[0].endswith(detail_suffix)
+    assert mock_get.call_args_list[0].kwargs["params"]["namespace"] == "static-us"
+    return result, mock_get
+
+
+def test_search_achievement_category_schema_is_registered_and_requires_search_term():
+    """search_achievement_category is distinct from a single named achievement."""
+    schema = _schema("search_achievement_category")
+    assert "search_achievement_category" in TOOL_HANDLERS
+    assert schema["parameters"]["required"] == ["search_term"]
+    assert "search_term" in schema["parameters"]["properties"]
+    description = schema["description"]
+    assert "MUST call this tool" in description
+    assert "achievement category" in description.lower()
+    assert "search_achievement_by_name" in description
+
+
+def test_search_achievement_category_index_then_detail(monkeypatch):
+    """A named category in the index is fetched at /data/wow/achievement-category/{id}."""
+    result, mock_get = _index_then_detail(
+        monkeypatch,
+        handlers.handle_search_achievement_category,
+        "Quests",
+        "/data/wow/achievement-category/index",
+        "/data/wow/achievement-category/92",
+        {"categories": [{"id": 92, "name": "Quests"}]},
+        {"id": 92, "name": "Quests"},
+    )
+    assert "Achievement category data received" in result
+    assert "Quests" in result
+    assert mock_get.call_count == 2
+
+
+def test_search_achievement_category_unknown_name_returns_not_found(monkeypatch):
+    """An unknown achievement category uses the existing not-found string."""
+    blizzard.blizzard_token = None
+    mock_get = MagicMock(return_value=_json_response({"categories": [{"id": 92, "name": "Quests"}]}))
+    monkeypatch.setattr("requests.get", mock_get)
+
+    result = handlers.handle_search_achievement_category({"search_term": "Not A Category"}, "token")
+
+    assert result == handlers._not_found("Not A Category")
+    assert mock_get.call_count == 1
+    assert mock_get.call_args.args[0].endswith("/data/wow/achievement-category/index")
+
+
+@pytest.mark.parametrize("status", [500, 401])
+def test_search_achievement_category_failed_index_returns_not_found_or_auth(status, monkeypatch):
+    """A failed achievement-category index matches existing index-tool failure text."""
+    blizzard.blizzard_token = None
+    blizzard.last_error_was_auth = False
+    monkeypatch.setattr("requests.get", MagicMock(return_value=_json_response({}, status=status)))
+
+    result = handlers.handle_search_achievement_category({"search_term": "Quests"}, "token")
+
+    if status == 401:
+        assert result == handlers._auth_failed("achievement category")
+        assert "NO OFFICIAL DATA FOUND" not in result
+    else:
+        assert result == handlers._not_found("Quests")
+
+
+def test_search_item_class_schema_is_registered_and_requires_search_term():
+    """search_item_class is distinct from named-item and item-id lookup."""
+    schema = _schema("search_item_class")
+    assert "search_item_class" in TOOL_HANDLERS
+    assert schema["parameters"]["required"] == ["search_term"]
+    assert "search_term" in schema["parameters"]["properties"]
+    description = schema["description"]
+    assert "MUST call this tool" in description
+    assert "item class" in description.lower()
+    assert "search_item_by_name" in description
+    assert "lookup_item" in description
+
+
+def test_search_item_class_index_then_detail_never_calls_item_name_search(monkeypatch):
+    """Item class lookup uses the class index and never search_item_by_name."""
+    item_name_search = MagicMock(wraps=handlers.handle_search_item_by_name)
+    monkeypatch.setattr(handlers, "handle_search_item_by_name", item_name_search)
+    result, mock_get = _index_then_detail(
+        monkeypatch,
+        handlers.handle_search_item_class,
+        "Weapon",
+        "/data/wow/item-class/index",
+        "/data/wow/item-class/2",
+        {"item_classes": [{"id": 2, "name": "Weapon"}]},
+        {"id": 2, "name": "Weapon"},
+    )
+    assert "Item class data received" in result
+    assert "Weapon" in result
+    item_name_search.assert_not_called()
+    _assert_urls_exclude(mock_get, "/data/wow/search/item")
+    _assert_urls_exclude(mock_get, "/data/wow/item/")
+
+
+def test_search_item_class_unknown_name_returns_not_found(monkeypatch):
+    """An unknown item class uses the existing not-found string and skips item search."""
+    blizzard.blizzard_token = None
+    item_name_search = MagicMock()
+    monkeypatch.setattr(handlers, "handle_search_item_by_name", item_name_search)
+    mock_get = MagicMock(return_value=_json_response({"item_classes": [{"id": 2, "name": "Weapon"}]}))
+    monkeypatch.setattr("requests.get", mock_get)
+
+    result = handlers.handle_search_item_class({"search_term": "Not A Class"}, "token")
+
+    assert result == handlers._not_found("Not A Class")
+    item_name_search.assert_not_called()
+    _assert_urls_exclude(mock_get, "/data/wow/search/item")
+
+
+@pytest.mark.parametrize("status", [500, 401])
+def test_search_item_class_failed_index_returns_not_found_or_auth(status, monkeypatch):
+    """A failed item-class index matches existing index-tool failure text."""
+    blizzard.blizzard_token = None
+    blizzard.last_error_was_auth = False
+    item_name_search = MagicMock()
+    monkeypatch.setattr(handlers, "handle_search_item_by_name", item_name_search)
+    mock_get = MagicMock(return_value=_json_response({}, status=status))
+    monkeypatch.setattr("requests.get", mock_get)
+
+    result = handlers.handle_search_item_class({"search_term": "Weapon"}, "token")
+
+    item_name_search.assert_not_called()
+    _assert_urls_exclude(mock_get, "/data/wow/search/item")
+    if status == 401:
+        assert result == handlers._auth_failed("item class")
+        assert "NO OFFICIAL DATA FOUND" not in result
+    else:
+        assert result == handlers._not_found("Weapon")
+
+
+def test_search_item_appearance_set_schema_is_registered_and_requires_search_term():
+    """search_item_appearance_set is distinct from a gear item set."""
+    schema = _schema("search_item_appearance_set")
+    assert "search_item_appearance_set" in TOOL_HANDLERS
+    assert schema["parameters"]["required"] == ["search_term"]
+    assert "search_term" in schema["parameters"]["properties"]
+    description = schema["description"]
+    assert "MUST call this tool" in description
+    assert "appearance set" in description.lower()
+    assert "search_item_set" in description
+    assert "Judgement Armor" in description
+
+
+def test_search_item_appearance_set_index_then_detail_never_calls_item_set(monkeypatch):
+    """Appearance-set lookup uses item-appearance/set and never item-set paths."""
+    item_set_search = MagicMock(wraps=handlers.handle_search_item_set)
+    monkeypatch.setattr(handlers, "handle_search_item_set", item_set_search)
+    name = "Battleplate of the Highlord"
+    result, mock_get = _index_then_detail(
+        monkeypatch,
+        handlers.handle_search_item_appearance_set,
+        name,
+        "/data/wow/item-appearance/set/index",
+        "/data/wow/item-appearance/set/100",
+        {"appearance_sets": [{"id": 100, "name": name}]},
+        {"id": 100, "name": name},
+    )
+    assert "Item appearance set data received" in result
+    assert name in result
+    item_set_search.assert_not_called()
+    _assert_urls_exclude(mock_get, "/data/wow/item-set/")
+    _assert_urls_exclude(mock_get, "/search/item-set")
+
+
+def test_search_item_appearance_set_unknown_name_returns_not_found(monkeypatch):
+    """An unknown appearance set uses the existing not-found string and skips item sets."""
+    blizzard.blizzard_token = None
+    item_set_search = MagicMock()
+    monkeypatch.setattr(handlers, "handle_search_item_set", item_set_search)
+    mock_get = MagicMock(return_value=_json_response({
+        "appearance_sets": [{"id": 100, "name": "Battleplate of the Highlord"}],
+    }))
+    monkeypatch.setattr("requests.get", mock_get)
+
+    result = handlers.handle_search_item_appearance_set({"search_term": "Not A Set"}, "token")
+
+    assert result == handlers._not_found("Not A Set")
+    item_set_search.assert_not_called()
+    _assert_urls_exclude(mock_get, "/data/wow/item-set/")
+
+
+@pytest.mark.parametrize("status", [500, 401])
+def test_search_item_appearance_set_failed_index_returns_not_found_or_auth(status, monkeypatch):
+    """A failed appearance-set index matches existing index-tool failure text."""
+    blizzard.blizzard_token = None
+    blizzard.last_error_was_auth = False
+    item_set_search = MagicMock()
+    monkeypatch.setattr(handlers, "handle_search_item_set", item_set_search)
+    mock_get = MagicMock(return_value=_json_response({}, status=status))
+    monkeypatch.setattr("requests.get", mock_get)
+
+    result = handlers.handle_search_item_appearance_set(
+        {"search_term": "Battleplate of the Highlord"},
+        "token",
+    )
+
+    item_set_search.assert_not_called()
+    _assert_urls_exclude(mock_get, "/data/wow/item-set/")
+    if status == 401:
+        assert result == handlers._auth_failed("item appearance set")
+        assert "NO OFFICIAL DATA FOUND" not in result
+    else:
+        assert result == handlers._not_found("Battleplate of the Highlord")
