@@ -16,3 +16,5 @@ htmlcov/
 .mypy_cache/
 *.egg-info/
 PROMPT-gradio-port.md
+PROMPT-cursor-blizzard-job2.md
+PROMPT-cursor-blizzard-catalog-scan.md

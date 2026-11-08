@@ -146,6 +146,38 @@ _SEARCH_TOOL_SPECS = (
     ),
 )
 
+
+# Resolver-backed tools. Each row is one schema. The matching handler is one
+# entry that calls _resolve_entity. A later family adds a row here, a row in
+# _ENTITY_RESOLVER, and one TOOL_HANDLERS entry.
+_RESOLVER_TOOL_SPECS = (
+    (
+        "search_decor",
+        "You MUST call this tool whenever the user asks about a specific WoW housing decor furnishing by name. Do NOT use this tool for a player-housing room or for a normal item; use search_room or search_item_by_name for those. This is non-negotiable. Always call the tool FIRST — never answer from memory or your training data, even if you think you know it.",
+        "The housing decor furnishing name, e.g. 'Dwarven Brazier'",
+    ),
+    (
+        "search_room",
+        "You MUST call this tool whenever the user asks about a specific WoW player-housing room by name. Do NOT use this tool for housing decor, a dungeon, or a raid; use search_decor or search_journal_instance_by_name for those. This is non-negotiable. Always call the tool FIRST — never answer from memory or your training data, even if you think you know it.",
+        "The player-housing room name, e.g. 'Gilded Hall'",
+    ),
+    (
+        "search_achievement_category",
+        "You MUST call this tool whenever the user asks about a WoW achievement category such as Quests or Exploration. Do NOT use this for one named achievement; use search_achievement_by_name for that. This is non-negotiable. Always call the tool FIRST — never answer from memory or your training data, even if you think you know it.",
+        "The achievement category name, e.g. 'Quests' or 'Exploration'",
+    ),
+    (
+        "search_item_class",
+        "You MUST call this tool whenever the user asks about a WoW item class such as Weapon, Armor, or Consumable. Do NOT use this for a named item or a numeric item ID; use search_item_by_name or lookup_item for those. This is non-negotiable. Always call the tool FIRST — never answer from memory or your training data, even if you think you know it.",
+        "The item class name, e.g. 'Weapon' or 'Armor'",
+    ),
+    (
+        "search_item_appearance_set",
+        "You MUST call this tool whenever the user asks about a named WoW transmog appearance set (an item-appearance set). Do NOT use this for a gear item set such as Judgement Armor; use search_item_set for gear sets. This is non-negotiable. Always call the tool FIRST — never answer from memory or your training data, even if you think you know it.",
+        "The item appearance set name, e.g. 'Battleplate of the Highlord'",
+    ),
+)
+
 # lookup_item and get_wow_token_price stay handwritten: they do not take
 # search_term. Item-by-ID must stay a different tool from item-by-name so
 # the model cannot send "Thunderfury" to the numeric ID endpoint.
@@ -179,3 +211,4 @@ TOOL_SCHEMAS = [
         }
     },
 ]
+TOOL_SCHEMAS.extend(_search_schema(*spec) for spec in _RESOLVER_TOOL_SPECS)
