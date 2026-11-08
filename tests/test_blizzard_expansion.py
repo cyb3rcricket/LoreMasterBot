@@ -893,3 +893,160 @@ def test_multi_tool_history_still_serializable_with_new_handlers(monkeypatch):
     assistant = next(item for item in bot.history if item.get("role") == "assistant" and "tool_calls" in item)
     assert [entry["id"] for entry in assistant["tool_calls"]] == ["call_a", "call_b"]
     assert json.dumps(bot.history)
+
+
+# ============================================================================
+# Job 2 resolver tools — decor and room (search mode)
+# ============================================================================
+
+
+def _search_hit(entity_id, name):
+    return {"results": [{"data": {"id": entity_id, "name": {"en_US": name}}}]}
+
+
+def _assert_urls_exclude(mock_get, fragment):
+    for call in mock_get.call_args_list:
+        assert fragment not in call.args[0]
+
+
+def test_search_decor_schema_is_registered_and_requires_search_term():
+    """search_decor is a distinct name-search tool, separate from rooms and items."""
+    schema = _schema("search_decor")
+    assert "search_decor" in TOOL_HANDLERS
+    assert schema["parameters"]["required"] == ["search_term"]
+    assert "search_term" in schema["parameters"]["properties"]
+    description = schema["description"]
+    assert "MUST call this tool" in description
+    assert "housing decor" in description.lower()
+    assert "search_room" in description
+    assert "search_item_by_name" in description
+
+
+def test_search_decor_search_then_detail_path(monkeypatch):
+    """A decor name search returns an id and the detail GET uses /data/wow/decor/{id}."""
+    blizzard.blizzard_token = None
+    name = "Dwarven Brazier"
+    mock_get = MagicMock(side_effect=[
+        _json_response(_search_hit(42, name)),
+        _json_response({"id": 42, "name": name}),
+    ])
+    monkeypatch.setattr("requests.get", mock_get)
+
+    result = handlers.handle_search_decor({"search_term": name}, "token")
+
+    assert "Decor data received" in result
+    assert name in result
+    assert mock_get.call_args_list[0].args[0].endswith("/data/wow/search/decor")
+    assert mock_get.call_args_list[0].kwargs["params"]["name.en_US"] == name
+    assert mock_get.call_args_list[0].kwargs["params"]["namespace"] == "static-us"
+    assert mock_get.call_args_list[1].args[0].endswith("/data/wow/decor/42")
+    assert mock_get.call_count == 2
+
+
+def test_search_decor_blank_term_makes_no_network_call(monkeypatch):
+    """A blank decor name must not call Blizzard."""
+    mock_get = MagicMock()
+    monkeypatch.setattr("requests.get", mock_get)
+
+    for term in ("", "   "):
+        result = handlers.handle_search_decor({"search_term": term}, "token")
+        assert "NO OFFICIAL DATA FOUND" in result
+
+    assert not mock_get.called
+
+
+def test_search_decor_miss_returns_not_found(monkeypatch):
+    """An empty decor search uses the existing not-found string."""
+    blizzard.blizzard_token = None
+    mock_get = MagicMock(return_value=_json_response({"results": []}))
+    monkeypatch.setattr("requests.get", mock_get)
+
+    result = handlers.handle_search_decor({"search_term": "Not A Furnishing"}, "token")
+
+    assert result == handlers._not_found("Not A Furnishing")
+    assert mock_get.call_args_list[0].args[0].endswith("/data/wow/search/decor")
+
+
+def test_search_decor_http_401_returns_auth_failure(monkeypatch):
+    """HTTP 401 on decor search uses the existing auth-failure string."""
+    blizzard.blizzard_token = None
+    blizzard.last_error_was_auth = False
+    monkeypatch.setattr("requests.get", MagicMock(return_value=_json_response({}, status=401)))
+
+    result = handlers.handle_search_decor({"search_term": "Dwarven Brazier"}, "token")
+
+    assert result == handlers._auth_failed("decor")
+    assert "NO OFFICIAL DATA FOUND" not in result
+
+
+def test_search_room_schema_is_registered_and_requires_search_term():
+    """search_room is a distinct name-search tool, separate from decor and dungeons."""
+    schema = _schema("search_room")
+    assert "search_room" in TOOL_HANDLERS
+    assert schema["parameters"]["required"] == ["search_term"]
+    assert "search_term" in schema["parameters"]["properties"]
+    description = schema["description"]
+    assert "MUST call this tool" in description
+    assert "player-housing room" in description.lower()
+    assert "search_decor" in description
+    assert "search_journal_instance_by_name" in description
+
+
+def test_search_room_search_then_detail_path_never_calls_decor(monkeypatch):
+    """A room name search hits /data/wow/room/{id} and never the decor URL."""
+    blizzard.blizzard_token = None
+    name = "Gilded Hall"
+    mock_get = MagicMock(side_effect=[
+        _json_response(_search_hit(7, name)),
+        _json_response({"id": 7, "name": name}),
+    ])
+    monkeypatch.setattr("requests.get", mock_get)
+
+    result = handlers.handle_search_room({"search_term": name}, "token")
+
+    assert "Room data received" in result
+    assert name in result
+    assert mock_get.call_args_list[0].args[0].endswith("/data/wow/search/room")
+    assert mock_get.call_args_list[0].kwargs["params"]["name.en_US"] == name
+    assert mock_get.call_args_list[1].args[0].endswith("/data/wow/room/7")
+    _assert_urls_exclude(mock_get, "/decor")
+
+
+def test_search_room_blank_term_makes_no_network_call(monkeypatch):
+    """A blank room name must not call Blizzard, including the decor URL."""
+    mock_get = MagicMock()
+    monkeypatch.setattr("requests.get", mock_get)
+
+    for term in ("", "   "):
+        result = handlers.handle_search_room({"search_term": term}, "token")
+        assert "NO OFFICIAL DATA FOUND" in result
+
+    assert not mock_get.called
+    _assert_urls_exclude(mock_get, "/decor")
+
+
+def test_search_room_miss_returns_not_found_and_never_calls_decor(monkeypatch):
+    """A room search miss uses the existing not-found string and never calls decor."""
+    blizzard.blizzard_token = None
+    mock_get = MagicMock(return_value=_json_response({"results": []}))
+    monkeypatch.setattr("requests.get", mock_get)
+
+    result = handlers.handle_search_room({"search_term": "Not A Room"}, "token")
+
+    assert result == handlers._not_found("Not A Room")
+    assert mock_get.call_args_list[0].args[0].endswith("/data/wow/search/room")
+    _assert_urls_exclude(mock_get, "/decor")
+
+
+def test_search_room_http_401_returns_auth_failure_and_never_calls_decor(monkeypatch):
+    """HTTP 401 on room search uses the existing auth-failure string and never calls decor."""
+    blizzard.blizzard_token = None
+    blizzard.last_error_was_auth = False
+    mock_get = MagicMock(return_value=_json_response({}, status=401))
+    monkeypatch.setattr("requests.get", mock_get)
+
+    result = handlers.handle_search_room({"search_term": "Gilded Hall"}, "token")
+
+    assert result == handlers._auth_failed("room")
+    assert "NO OFFICIAL DATA FOUND" not in result
+    _assert_urls_exclude(mock_get, "/decor")

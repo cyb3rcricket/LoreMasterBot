@@ -542,6 +542,69 @@ def handle_search_quest_group(function_args, access_token):
     return _cap_tool_result(f"Quest group data received ({len(payloads)} matches): ", labeled)
 
 
+# New families only. The current tools keep their own handlers.
+# One later family = one row here + one schema row + one TOOL_HANDLERS entry.
+# mode is "search" or "index". entity_type is the path piece after /data/wow/.
+# detail_fetch is the shared document getter; the dispatcher passes entity_type.
+_ENTITY_RESOLVER = {
+    "decor": {
+        "mode": "search",
+        "entity_type": "decor",
+        "detail_fetch": blizzard_api._get_entity_data,
+        "result_label": "Decor",
+        "noun": "decor",
+    },
+    "room": {
+        "mode": "search",
+        "entity_type": "room",
+        "detail_fetch": blizzard_api._get_entity_data,
+        "result_label": "Room",
+        "noun": "room",
+    },
+}
+
+
+def _resolve_entity(entity_key, function_args, access_token):
+    """Run one resolver row through the existing search or index handler."""
+    spec = _ENTITY_RESOLVER[entity_key]
+    entity_type = spec["entity_type"]
+    detail_fetch = spec["detail_fetch"]
+
+    def fetch_fn(entity_id, token):
+        return detail_fetch(entity_type, entity_id, token)
+
+    mode = spec["mode"]
+    if mode == "search":
+        return _search_and_fetch(
+            function_args,
+            access_token,
+            entity_type,
+            fetch_fn,
+            spec["result_label"],
+            spec["noun"],
+        )
+    if mode == "index":
+        return _index_search_and_fetch(
+            function_args,
+            access_token,
+            entity_type,
+            fetch_fn,
+            spec["result_label"],
+            spec["noun"],
+        )
+    raise ValueError(f"Unknown resolver mode: {mode}")
+
+
+def handle_search_decor(function_args, access_token):
+    """Look up housing decor by name through the entity resolver."""
+    return _resolve_entity("decor", function_args, access_token)
+
+
+def handle_search_room(function_args, access_token):
+    """Look up a player-housing room by name through the entity resolver."""
+    return _resolve_entity("room", function_args, access_token)
+
+
 def handle_get_wow_token_price(function_args, access_token):
     """Return the current token price in gold, or a short failure string."""
     if not access_token:
@@ -580,4 +643,6 @@ TOOL_HANDLERS = {
     "search_creature_family": handle_search_creature_family,
     "search_quest_group": handle_search_quest_group,
     "get_wow_token_price": handle_get_wow_token_price,
+    "search_decor": handle_search_decor,
+    "search_room": handle_search_room,
 }
